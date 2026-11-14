@@ -1,3 +1,5 @@
+[日本語](README.md) | [English](README.en.md)
+
 # Zepp MCP
 
 Zeppの**非公式クラウドAPI**を使い、自分のワークアウトを読み取る個人用MCPサーバーです。Cloudflare Workers上で動作するTypeScript実装で、認証、履歴の取得、ワークアウト詳細の取得、GPS・心拍・高度・ケイデンス等の時系列デコードに対応します。
