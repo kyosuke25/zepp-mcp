@@ -1,0 +1,7 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "zepp-mcp", "main": "src/index.ts",
+  "compatibility_date": "2026-11-14", "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": false },
+  "vars": { "ZEPP_REGION": "us2", "ZEPP_COUNTRY": "US", "ZEPP_DATA_REGION": "auto" }
+}

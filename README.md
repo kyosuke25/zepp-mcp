@@ -1,0 +1,190 @@
+# Zepp MCP
+
+Zeppの**非公式クラウドAPI**を使い、自分のワークアウトを読み取る個人用MCPサーバーです。Cloudflare Workers上で動作するTypeScript実装で、認証、履歴の取得、ワークアウト詳細の取得、GPS・心拍・高度・ケイデンス等の時系列デコードに対応します。
+
+**Zepp Health、Huami、Amazfitの公式プロジェクトではなく、これらの企業とは無関係です。** 非公式APIは予告なく変更・停止される可能性があります。MITライセンスで、動作やデータの正確性は無保証です。
+
+現在のバージョンは`0.2.3`です。合成データと通信モックで26件のテストを実施しています。対象アカウント・地域・デバイスすべてでの動作を保証するものではなく、履歴取得からデコードまでの実アカウント検証は継続中です。
+
+## 前提
+
+- CloudflareアカウントとWorkersへデプロイする権限
+- Node.js **22.12.0以降**、npm、Git（同梱Wranglerの要件）
+- 時計のワークアウトが同期されており、**メールアドレス＋パスワードでログインできるZeppアカウント**
+- Streamable HTTPと独自Authorizationヘッダーに対応したMCPクライアント
+
+Wranglerはプロジェクトの依存に含まれます。グローバルインストールは不要です。
+
+## 先に確認すること：Zeppアカウントの落とし穴
+
+アプリへのログインがGoogleなどのソーシャルログインのみの場合、このサーバーへGoogleのパスワードを入力しても使えません。この実装はGoogle OAuthやソーシャルログインに対応していません。**ワークアウトのあるアプリ側アカウントに、メールアドレスを紐付けてパスワードを設定する必要があります。** 設定の場所・可否はアプリのバージョンやアカウント状態によります。
+
+開発時に、次の事例を実際に経験しました。
+
+1. メール＋パスワード認証は成功するのに、履歴は0件でした。
+2. 時計データのあるアプリはGoogle連携ログインを使っていました。
+3. アプリ側に同じメールを追加しようとすると「既に存在する」と拒否されました。
+4. メール＋パスワードで入っていたのは、別のデータのないアカウントだと判断しました。
+
+同じメールアドレスに見えても、アプリのソーシャルログインとメール＋パスワードのログインが同じアカウントとは限りません。既に使われているメールを紐付けられない場合は、利用可能な別メールを**データのある側**へ紐付け、パスワードを設定してください。別の空アカウントを新規作成するだけでは解決しません。
+
+`diagnostics.user_id`と、取得できた場合の`diagnostics.account_profile.display_name`が照合の補助になります。アプリにIDが表示されない場合もあり、表示名の一致だけで同一アカウントとは断定できません。
+
+## 1. ソース取得・オフライン確認
+
+```sh
+git clone https://github.com/kyosuke25/zepp-mcp.git
+cd zepp-mcp
+npm ci
+npx wrangler --version
+npm run check
+npm test
+npm run check:public
+```
+
+`npm test`は事前に`wrangler deploy --dry-run`でバンドルを作りますが、Cloudflareへのデプロイや実Zeppへの接続は行いません。
+
+## 2. 自分のCloudflareへデプロイ
+
+```sh
+npx wrangler login
+npx wrangler whoami
+npx wrangler deploy
+```
+
+必要なら、デプロイ前に`wrangler.jsonc`のWorker名`zepp-mcp`を自分用に変更してください。アカウントIDや配備先ホスト名の直書きは不要です。デプロイ時に表示される**自分のWorker URL**を控えます。
+
+```text
+https://<worker-name>.<account-subdomain>.workers.dev
+```
+
+これはプレースホルダです。このリポジトリに開発者の稼働サーバーURLは含めていません。シークレットをまだ設定していない段階では、`/mcp`は503で閉じています。
+
+## 3. シークレット3つを設定
+
+次の**正確な名前**で、Workerのシークレットを設定します。
+
+| 名前 | 値 |
+| --- | --- |
+| `ZEPP_EMAIL` | ワークアウトのあるZeppアカウントに紐付けたメール |
+| `ZEPP_PASSWORD` | そのアカウントのZepp用パスワード |
+| `MCP_AUTH_TOKEN` | 自分で生成する独立したランダム文字列、**32文字以上** |
+
+`MCP_AUTH_TOKEN`はパスワードマネージャーの生成機能等で作り、同じパスワードマネージャーへ保管してください。ZeppやGoogleのパスワードを流用しないでください。後でMCPクライアントにも同じ値を設定します。
+
+### 方法A：Wrangler CLI
+
+```sh
+npx wrangler secret put ZEPP_EMAIL
+npx wrangler secret put ZEPP_PASSWORD
+npx wrangler secret put MCP_AUTH_TOKEN
+```
+
+それぞれの対話プロンプトで値を入力します。値をコマンド引数、Git管理ファイル、チャットやIssueへ貼り付けないでください。
+
+### 方法B：Cloudflareダッシュボード
+
+1. **Workers & Pages**から自分が作ったWorkerを開きます。
+2. **Settings → Variables and Secrets → Add**を開きます。
+3. 種類に**Secret**を選び、上記の名前と値を入力します。3つともSecretとして登録してください。
+4. 画面の**Deploy**で保存・適用します。
+
+CLIとダッシュボードは代替手段です。両方で二重登録する必要はありません。詳しくは[Cloudflareのシークレット設定](https://developers.cloudflare.com/workers/configuration/secrets/)を参照してください。
+
+## 4. 平文の地域設定
+
+`wrangler.jsonc`の`vars`に次の既定値があります。これらはシークレットではありません。
+
+| 変数 | 既定値 | 意味 |
+| --- | --- | --- |
+| `ZEPP_REGION` | `us2` | 最初の認証リクエストのホストを選ぶ初期リージョン |
+| `ZEPP_COUNTRY` | `US` | 最初の認証フォームの国コード |
+| `ZEPP_DATA_REGION` | `auto` | 認証応答にルーティング情報がない場合のデータ取得先。autoなら認証リージョンを使用 |
+
+トークン応答にregion/country_codeがあれば、それをapp_token交換に使います。履歴・詳細はlogin応答のAPIルート、認識できたlogin地域、トークン応答地域の順に優先し、設定値で上書きしません。国コードからAPIホストを推測しません。
+
+`us-west-2`→`us2`、`eu-central-1`→`de2`、`cn-north-1`→`cn`を正規化します。認識済みの応答ルートがある場合、解釈できない補助メタデータは警告として扱います。有効な応答ルートが無く未知のルーティング情報だけがある場合は停止します。別シャードを自動探索する処理はありません。
+
+自分の設定を変更する場合は、ローカルの`wrangler.jsonc`も合わせて管理してください。後のデプロイでダッシュボードの平文設定がローカル設定に戻る場合があります。
+
+## 5. MCPクライアントから接続
+
+Streamable HTTPの接続先は、**自分のWorker URLに`/mcp`を付けたURL**です。次のヘッダーを設定します。
+
+```text
+Authorization: Bearer <your-MCP_AUTH_TOKEN>
+```
+
+環境変数展開に対応したクライアントの設定例です。構文と展開方法はクライアントに合わせてください。
+
+```json
+{
+  "mcpServers": {
+    "zepp": {
+      "type": "http",
+      "url": "${ZEPP_MCP_URL}",
+      "headers": {
+        "Authorization": "Bearer ${ZEPP_MCP_AUTH_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+クライアントの秘密設定で`ZEPP_MCP_URL`に自分の`/mcp` URL、`ZEPP_MCP_AUTH_TOKEN`にWorkerの`MCP_AUTH_TOKEN`と同じ値を渡します。`${...}`を展開できないクライアントでは、専用のURL・秘密ヘッダー入力欄を使ってください。Zeppのメール・パスワードをクライアントに渡す必要はありません。
+
+Bearer付きのMCP `initialize`または`tools/list`へのPOSTがHTTP 200で返ればMCP接続は正常です。単にブラウザで`/mcp`を開くGETは、この確認の代わりになりません。`/health`の200はWorker起動の確認だけで、Zepp認証成功を意味しません。
+
+### ツール一覧
+
+| ツール | 引数 | 動作 |
+| --- | --- | --- |
+| `zepp_authenticate` | なし | Zepp認証、アカウント・地域診断 |
+| `list_workouts` | 任意の`cursor_track_id` | 履歴1ページ。次ページは返された`next_track_id`を渡す |
+| `get_workout` | `track_id`, `source` | 履歴にあるIDとsourceで詳細1件を取得・デコード |
+| `run_poc` | なし | 認証→履歴1ページ→先頭1件の詳細→デコード |
+
+初回は`run_poc`を**1回だけ**実行します。空履歴なら詳細取得を省略します。失敗時は診断を確認し、推測した設定で呼び出しを繰り返さないでください。認証以外のZepp APIはGETのみで、書き込み、自動ページング、自動リトライはありません。
+
+この版はBearerヘッダー認証です。OAuthログイン画面、クライアント自動登録、旧独立SSEエンドポイントはありません。任意ヘッダーを設定できないクライアントへの対応は別途必要です。
+
+## ローカル開発
+
+```sh
+cp .dev.vars.example .dev.vars
+chmod 600 .dev.vars
+```
+
+`.dev.vars`をエディタで開き、同じ3シークレットを設定します。`.dev.vars`はローカル専用で、本番へ自動登録されません。
+
+```sh
+npm run dev
+```
+
+ローカルMCP URLは`http://127.0.0.1:8787/mcp`です。別ターミナルで`npm run poc`を1回実行すると、`.dev.vars`を読み、ローカルMCP経由で実Zeppへ接続します。結果はGit除外された`output/poc-result.json`に保存します。
+
+実アカウントに接続しないデコード確認は`npm run fixture`で行えます。出力は`output/fixture-decoded.json`です。
+
+## 診断とデータ形式
+
+認証・履歴・PoCの`diagnostics`には、実装版、user_id、取得できた場合の表示名、設定値、解決地域、履歴ホスト、採用元、上流HTTPステータス等が入ります。`login_region_shape`や`routing_warnings`で解釈できなかった補助情報も判別できます。原文レスポンス、Location、パスワード、トークンは返しません。実ID・表示名・位置情報は個人情報として扱い、公開Issueへ貼らないでください。
+
+表示名の`status`は`available` / `not_returned` / `withheld`で、名前が返らない場合はnullです。追加プロフィールAPIは呼びません。`authentication_method: email_password`はWorkerが使った方式で、アプリのGoogle連携状態を検出した値ではありません。
+
+`streams`は各センサーの観測列、`timeline`は秒オフセットの和集合です。時刻はUTCで、欠測の補間・前値埋めは行いません。GPSは緯度・経度の差分を累積して1e8で割り、高度はcmの絶対値をmへ変換します。心拍は差分を累積します。ケイデンス`cadence_spm`はgait第4列を優先し、欠けている場合だけ区間歩数×60÷秒で推定して`cadence_source`で区別します。未対応ストリームは警告します。
+
+## セキュリティと公開範囲
+
+- **ソースコードはpublicですが、稼働MCPの個人データへのアクセスはトークン必須です。** URLを知るだけでは利用できません。ネットワーク上のURL自体は公開され、`/health`のみ非機密の起動確認を返します。
+- シークレット未設定・MCPトークンが32文字未満なら`/mcp`は503、Bearerが無い・不一致なら401です。
+- このリポジトリに実認証情報、実user_id、実配備先URL、CloudflareアカウントIDは含めていません。テストは合成データ・ダミー認証値のみです。認証の固定キー/IVは公開プロトコルの定数で、個人のシークレットではありません。
+- `.env`、`.dev.vars`、`.wrangler/`、`output/`、`dist/`はGit対象外です。ファイルを強制追加しないでください。
+- Zeppトークンはisolateのメモリ内だけで最大15分再利用します。認証失敗は同一isolateで5分抑制しますが、別isolateや再配備を跨ぐ共有・抑制はありません。
+- 応答原文や認証ヘッダーをログへ出さない設計です。追加するログ・監視でも秘密情報や健康情報を記録しないでください。
+- MCPトークンを共有した相手は個人データを取得できます。保管先・クライアントを限定し、漏洩時は変更してください。
+
+## ファイル構成・ライセンス
+
+`src/zepp-client.ts`と`src/decoder.ts`はMCPに依存しないモジュールです。`src/index.ts`がWorkers/MCPの入口、`test/`が合成データ・通信モック・workerd結合テスト、`REPORT.md`が検証と公開前チェック結果です。
+
+[MIT License](LICENSE)。

@@ -1,0 +1,6 @@
+# cp .dev.vars.example .dev.vars && chmod 600 .dev.vars
+# Fill locally; never paste credentials into chat or commit them.
+ZEPP_EMAIL=""
+ZEPP_PASSWORD=""
+# Separate random bearer credential for access to this personal MCP endpoint.
+MCP_AUTH_TOKEN=""
