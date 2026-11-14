@@ -1,4 +1,4 @@
-import { gearMetadata } from './gear-metadata';
+import { publicUpstreamData } from './upstream-data';
 /** Textual delta formats independently reimplemented from documented fields:
  * https://github.com/H3llK33p3r/zepp-fit-extractor (ZeppRestClient.kt field comments).
  * No source code copied. Sparse observations: no interpolation or forward fill.
@@ -27,6 +27,7 @@ function numeric(value: string | number, field: string, integer = false): number
   return n;
 }
 export function decodeWorkout(detail: Record<string, unknown>, startTime?: string | number) {
+  detail = publicUpstreamData(detail) as Record<string, unknown>;
   const rawStart = startTime ?? detail.trackid;
   if (typeof rawStart !== 'string' && typeof rawStart !== 'number') throw new DecodeError('trackid: missing Unix start time');
   const start = numeric(rawStart, 'trackid', true);
@@ -132,9 +133,25 @@ export function decodeWorkout(detail: Record<string, unknown>, startTime?: strin
       timeline.set(t, { ...timeline.get(t), ...observation });
     }
   }
+  const decodedFields = new Set<string>(['time', ...positionalFields, ...timedFields]);
+  const fieldInventory = Object.fromEntries(Object.entries(detail).map(([key, value]) => {
+    const type = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+    // For unknown formats this counts wire records, NOT inferred seconds or FIT samples.
+    const count = typeof value === 'string' ? (value === '' ? 0 : cells(value, key).length)
+      : Array.isArray(value) ? value.length : null;
+    return [key, { value_type: type, decode_status: decodedFields.has(key) ? 'decoded' : 'raw_preserved',
+      sample_count: count, count_basis: typeof value === 'string' ? 'semicolon_records'
+        : Array.isArray(value) ? 'array_elements' : 'not_applicable' }];
+  }));
+  // Preserve every unhandled field, including opaque/new sport-specific formats.
+  const metadata = Object.fromEntries(Object.entries(detail).filter(([key]) => !decodedFields.has(key)));
+  const undecodedStreams = Object.fromEntries(Object.entries(metadata).filter(([key, value]) =>
+    typeof value === 'string' || Array.isArray(value)).map(([key, value]) => [key, {
+      sample_count: fieldInventory[key].sample_count, count_basis: fieldInventory[key].count_basis, raw: value }]));
   const unsupported = ['cadence', 'stroke_speed', 'air_pressure_altitude', 'correct_altitude'].filter(k => detail[k]);
-  if (unsupported.length) warnings.push(`Unsupported streams: ${unsupported.join(', ')}`);
-  return { start_time_unix: start, metadata: gearMetadata(detail), streams, sample_alignment: sampleAlignment,
+  if (unsupported.length) warnings.push(`Unsupported streams preserved as raw data: ${unsupported.join(', ')}`);
+  return { start_time_unix: start, metadata, field_inventory: fieldInventory, undecoded_streams: undecodedStreams,
+    streams, sample_alignment: sampleAlignment,
     sample_counts: Object.fromEntries(Object.entries(streams).map(([k, v]) => [k, v.length])),
     timeline: [...timeline.values()].sort((a, b) => a.offset_s - b.offset_s), warnings };
 }

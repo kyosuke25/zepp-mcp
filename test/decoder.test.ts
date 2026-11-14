@@ -115,3 +115,36 @@ test('full streams accept a complete last element without a trailing delimiter',
   assert.equal(r.streams.runPosture.length, 2);
   assert.equal(r.timeline[2].power_w, 210);
 });
+
+test('full detail inventory preserves unknown sport streams, objects and scalars without guessing units', () => {
+  const detail = { trackid: 1700000000, heart_rate: '0,80;1,1;', cadence: '1,180;1,182;',
+    hyroxStations: [{ station: 'fixture-row', duration: 120 }], strength_sets: '1,10,30;2,8,35;',
+    swim_laps: { laps: [{ length: 25, strokes: 18 }] }, future_metric: 'opaque-future-format',
+    deviceScore: 12, unknownNull: null, source: 'watch', app_token: 'fixture-private',
+    nested: { access: 'fixture-private', metric: 9 } };
+  const r = decodeWorkout(detail);
+  assert.deepEqual(Object.keys(r.field_inventory).sort(), Object.keys(detail).filter(k => k !== 'app_token').sort());
+  assert.equal(r.field_inventory.heart_rate.decode_status, 'decoded');
+  assert.equal(r.field_inventory.cadence.sample_count, 2);
+  assert.equal(r.field_inventory.strength_sets.sample_count, 2);
+  assert.equal(r.field_inventory.hyroxStations.sample_count, 1);
+  assert.equal(r.field_inventory.future_metric.sample_count, 1);
+  assert.equal(r.field_inventory.swim_laps.sample_count, null);
+  assert.equal(r.field_inventory.swim_laps.count_basis, 'not_applicable');
+  assert.equal(r.undecoded_streams.cadence.raw, detail.cadence);
+  assert.deepEqual(r.metadata.swim_laps, detail.swim_laps);
+  assert.equal(r.metadata.deviceScore, 12);
+  assert.equal(r.metadata.unknownNull, null);
+  assert.deepEqual(r.metadata.nested, { metric: 9 });
+  assert.equal(r.metadata.app_token, undefined);
+  assert.equal(JSON.stringify(r).includes('fixture-private'), false);
+});
+
+test('unknown empty and sparse streams report wire slots explicitly and retain their raw form', () => {
+  const r = decodeWorkout({ trackid: 1700000000, new_stream: '1,2;;3,4;', empty_stream: '', empty_array: [] });
+  assert.equal(r.field_inventory.new_stream.sample_count, 3);
+  assert.equal(r.field_inventory.new_stream.count_basis, 'semicolon_records');
+  assert.equal(r.undecoded_streams.new_stream.raw, '1,2;;3,4;');
+  assert.equal(r.field_inventory.empty_stream.sample_count, 0);
+  assert.equal(r.field_inventory.empty_array.sample_count, 0);
+});

@@ -72,7 +72,7 @@ export class ZeppClient {
       .every(k => c[k] === this.#config[k]);
   }
   diagnostics() {
-    return { implementation_version: '0.2.11', user_id: this.#userId ?? null,
+    return { implementation_version: '0.2.12', user_id: this.#userId ?? null,
       authentication_source: this.#authSource, upstream_status_scope: 'last_observed',
       retry_count: this.#retryCount, last_retry: this.#lastRetry ? { ...this.#lastRetry } : null,
       account_profile: { ...this.#profile },

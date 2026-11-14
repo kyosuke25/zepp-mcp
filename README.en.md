@@ -6,7 +6,7 @@ A personal MCP server that reads your workouts through Zepp's **unofficial cloud
 
 **This is not an official project of Zepp Health, Huami, or Amazfit and is not affiliated with those companies.** The unofficial API may change or become unavailable without notice. The software is provided under the MIT License, without warranties regarding operation or data accuracy.
 
-The current version is `0.2.11`. A public clone runs 50 tests using synthetic data and mocked network requests. Environments with the private local fixture also run four FIT regression tests. Authentication, retrieval of 39 workout records, and detailed decoding of the Fukuoka Marathon into per-second streams, including cadence, stride length, power, stance time, vertical oscillation, and vertical ratio, have been verified with a real account. This does not guarantee compatibility with every account, region, or device.
+The current version is `0.2.12`. A public clone runs 52 tests using synthetic data and mocked network requests. Environments with the private local fixture also run four FIT regression tests. Authentication, retrieval of 39 workout records, and detailed decoding of the Fukuoka Marathon into per-second streams, including cadence, stride length, power, stance time, vertical oscillation, and vertical ratio, have been verified with a real account. This does not guarantee compatibility with every account, region, or device.
 
 ## Prerequisites
 
@@ -155,9 +155,15 @@ This version uses Bearer-header authentication. It has no OAuth login page, auto
 
 `list_workouts.items[].gearId` preserves the upstream summary value (string, number, or null). An absent key is omitted. Neither a null selection nor an absent key proves that no shoes are registered. Shoe names are never inferred from IDs.
 
-`get_workout.metadata` and `run_poc.workout.metadata` contain available top-level detail-data shoe attributes such as `gearId`, `shoe_id`, `gear`, and `shoe`. Original key names and scalar values are preserved; arrays and objects are preserved too, with authentication-related keys removed recursively. Missing shoe data produces an empty object. These attributes are not time-series streams. A history ID is not copied into detail metadata.
+`get_workout.metadata` and `run_poc.workout.metadata` contain available top-level detail-data shoe attributes such as `gearId`, `shoe_id`, `gear`, and `shoe`. Original key names and scalar values are preserved; arrays and objects are preserved too, with authentication-related keys removed recursively. When shoe data is absent, no shoe keys are added. These attributes are not time-series streams. A history ID is not copied into detail metadata.
 
 The My Gear list endpoint has not been identified, so `list_gear` is not provided. Retrieval of registered shoe names or cumulative distance is not guaranteed. Live verification of a run with gearId on 0.2.11 is pending a check through an authenticated client.
+
+### All detail fields
+
+Since 0.2.12, `field_inventory` includes every detail key except authentication fields. Entries contain `value_type`, `decode_status`, `sample_count`, and `count_basis`. Known streams are decoded into `streams` and `timeline` as before; every other field is retained with its original value under `metadata`. Unknown strings and arrays are also returned under `undecoded_streams` with their keys, counts, and `raw` values. Unsupported warnings no longer mean that data is discarded. The same handling covers unknown sport-specific fields such as HYROX, strength training, and swimming.
+
+For unknown strings, the count is the number of semicolon-delimited record slots (excluding a trailing separator and retaining interior empty slots); arrays use their element count. These counts do not establish seconds or semantic samples. Objects, numbers, and other values use `sample_count: null` and `count_basis: not_applicable`. Units, column meanings, and timestamps of unknown formats are not guessed: raw values remain available for later validation. Treat raw values as health and personal data too.
 
 ## Local development
 
