@@ -2,11 +2,11 @@
 
 # Zepp MCP
 
-A personal MCP server that reads your workouts through Zepp's **unofficial cloud API**. This TypeScript implementation runs on Cloudflare Workers and supports authentication, workout history, workout details, and time-series decoding of GPS, heart rate, altitude, cadence, and other samples.
+A personal MCP server that reads your workouts through Zepp's **unofficial cloud API**. This TypeScript implementation runs on Cloudflare Workers and supports authentication, workout history, workout details, and time-series decoding of GPS, heart rate, altitude, cadence, power, running dynamics, and other samples.
 
 **This is not an official project of Zepp Health, Huami, or Amazfit and is not affiliated with those companies.** The unofficial API may change or become unavailable without notice. The software is provided under the MIT License, without warranties regarding operation or data accuracy.
 
-The current version is `0.2.4`. It has 30 tests using synthetic data and mocked network requests. Authentication, retrieval of 39 workout records, and detailed decoding of the Fukuoka Marathon into per-second streams, including cadence and stride length, have been verified with a real account. This does not guarantee compatibility with every account, region, or device.
+The current version is `0.2.9`. A public clone runs 36 tests using synthetic data and mocked network requests. Environments with the private local fixture also run four FIT regression tests. Authentication, retrieval of 39 workout records, and detailed decoding of the Fukuoka Marathon into per-second streams, including cadence, stride length, power, stance time, vertical oscillation, and vertical ratio, have been verified with a real account. This does not guarantee compatibility with every account, region, or device.
 
 ## Prerequisites
 
@@ -44,7 +44,7 @@ npm test
 npm run check:public
 ```
 
-Before running tests, `npm test` builds the bundle with `wrangler deploy --dry-run`. It does not deploy to Cloudflare or contact the real Zepp service.
+Before running tests, `npm test` builds the bundle with `wrangler deploy --dry-run`. It does not deploy to Cloudflare or contact the real Zepp service. If no private data is present in `test/fixtures/local/`, the four FIT regression tests are automatically skipped. Real fixtures are neither distributed nor tracked in Git.
 
 ## 2. Deploy to your Cloudflare account
 
@@ -143,13 +143,11 @@ An MCP `initialize` or `tools/list` POST with the Bearer header returning HTTP 2
 | --- | --- | --- |
 | `zepp_authenticate` | None | Authenticate to Zepp and return account/region diagnostics |
 | `list_workouts` | Optional `cursor_track_id` | Fetch one history page; pass the returned `next_track_id` for the next page |
-| `get_workout` | `track_id`, `source` | Fetch and decode one workout using the ID and source from history |
+| `get_workout` | `track_id`, `source` | Fetch and decode one workout, including power and running dynamics, using the ID and source from history |
 | `run_poc` | None | Authenticate → fetch one history page → fetch the first workout's details → decode |
-| `debug_raw_streams` | `track_id`, `source` | Temporary diagnostic: return all field names/types and the first 8000 characters plus full length of each string-stream candidate from one detail response |
 
 For the first live check, run `run_poc` **once**. If history is empty, detail retrieval is skipped. On failure, inspect the diagnostics instead of repeatedly calling with guessed settings. Zepp API calls other than authentication are GET requests only. There are no data writes, automatic pagination, or automatic retries.
 
-`debug_raw_streams` is temporary and will be removed after comparison with FIT data. `fields` lists every field's key and type; `stream_keys` and `streams` cover every string field, including empty strings, except metadata and sensitive fields. Each entry has `raw_prefix`, `length` in Unicode characters, and `truncated`. `excluded_fields` explains exclusions for non-string, metadata, and sensitive fields. It does not decode data or fetch additional history. Results contain real workout/location data: do not post them to public issues or commit them to Git. Additional decoding of power and running dynamics has not yet been implemented.
 
 This version uses Bearer-header authentication. It has no OAuth login page, automatic client registration, or legacy standalone SSE endpoint. Clients that cannot set custom headers require additional support.
 
@@ -178,12 +176,25 @@ The display-name `status` is `available`, `not_returned`, or `withheld`; the nam
 
 `streams` contains observations for each sensor; `timeline` is their union by offset in seconds. Timestamps use UTC. Missing observations are not interpolated or forward-filled. GPS latitude/longitude deltas are accumulated and divided by 1e8; absolute altitude values in centimeters are converted to meters. Heart-rate deltas are accumulated. Cadence, `cadence_spm`, prioritizes gait column 4. Only when that column is absent is cadence estimated as interval steps × 60 ÷ seconds, with `cadence_source` distinguishing the source. Unsupported streams produce warnings.
 
+Power and running dynamics are returned in `streams.power_meter`, `streams.runPosture`, and the merged `timeline`.
+
+| Output field | Unit and conversion |
+| --- | --- |
+| `power_w` | Running power, W |
+| `stance_time_ms` | Stance time, ms; 65535 becomes null |
+| `vertical_oscillation_mm` | Vertical oscillation, mm; 65535 becomes null |
+| `vertical_ratio_pct` | Vertical ratio, %; encoded value ÷ 10; 255 becomes null |
+
+The first column of both streams is accumulated as a seconds delta. A first power delta of 1 starts at offset 1; a first runPosture delta of 0 starts at offset 0. A delta of 0 means another observation at the same time; 2 means an observation two seconds later. Gaps are not filled. There is no fixed ±1-second adjustment or alignment against the GPS time column. Same-time observations remain in the original stream; timeline uses the last observation. `sample_alignment` reports `mode: delta_seconds`, input counts, zero-delta counts, gap counts, and related information.
+
+The temporary raw-stream diagnostic tool has been removed following final FIT validation.
+
 ## Security and publication scope
 
 - **The source is public, but access to personal data through the live MCP server requires a token.** Knowing the URL is not enough. The network URL itself is public; only `/health` returns a non-sensitive liveness response.
 - If secrets are missing or the MCP token is shorter than 32 characters, `/mcp` returns 503. A missing or incorrect Bearer token returns 401.
-- This repository contains no real credentials, real user_id, live deployment URL, or Cloudflare account ID. Tests use only synthetic data and dummy credentials. The fixed authentication key/IV are public protocol constants, not personal secrets.
-- `.env`, `.dev.vars`, `.wrangler/`, `output/`, and `dist/` are excluded from Git. Do not force-add them.
+- This repository contains no real credentials, real user_id, live deployment URL, or Cloudflare account ID. Public test data consists only of synthetic values and dummy credentials. Private real data is isolated in the Git-ignored directory. The fixed authentication key/IV are public protocol constants, not personal secrets.
+- `.env`, `.dev.vars`, `.wrangler/`, `output/`, `dist/`, and `test/fixtures/local/` are excluded from Git. Do not force-add them.
 - Zepp tokens are cached only in isolate memory, for up to 15 minutes. Authentication failures are suppressed for five minutes within the same isolate; caching and suppression are not shared across isolates or deployments.
 - The implementation avoids logging raw responses and authentication headers. Keep secrets and health data out of any additional logging or monitoring.
 - Anyone you share the MCP token with can retrieve your personal data. Limit where it is stored and which clients receive it, and rotate it if leaked.

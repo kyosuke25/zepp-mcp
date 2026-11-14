@@ -46,7 +46,7 @@ test('workerd serves MCP initialization, tools and complete PoC with four mocked
     assert.equal(initialized.result.serverInfo.name, 'zepp-mcp');
     const list = await rpc(mf, 'tools/list');
     const listed = await readMcpResponse(list) as any;
-    assert.equal(listed.result.tools.length, 5);
+    assert.equal(listed.result.tools.length, 4);
     assert.equal(calls.length, 0); // Discovery never contacts Zepp.
     const response = await rpc(mf, 'tools/call', { name: 'run_poc', arguments: {} });
     assert.equal(response.status, 200);
@@ -59,7 +59,7 @@ test('workerd serves MCP initialization, tools and complete PoC with four mocked
     assert.equal(result.diagnostics.resolved_region, 'de2');
     assert.equal(result.diagnostics.user_id, '42');
     assert.equal(result.diagnostics.account_profile.display_name, 'Fixture Runner');
-    assert.equal(result.diagnostics.implementation_version, '0.2.4');
+    assert.equal(result.diagnostics.implementation_version, '0.2.9');
     assert.equal(result.diagnostics.auth_country, 'JP');
     assert.deepEqual(result.diagnostics.routing_warnings, ['unrecognized_login_region']);
     assert.equal(result.diagnostics.upstream_http_status.history, 200);
@@ -103,29 +103,41 @@ test('empty-history run_poc still includes routing diagnostics and stops before 
   } finally { await mf.dispose(); }
 });
 
-test('debug_raw_streams uses only auth plus one detail, includes unknown streams and masks secrets', async () => {
-  const { mf, calls } = runtime(true, false, { ...fixture,
-    power_meter: '1,250;'.repeat(1500), unknown_dynamics: '0,12,34;1,56,78',
-    empty_stream: '', opaque_stream: 'fixture-app-token', email: 'fixture@example.invalid',
-    app_token: 'fixture-app-token', profile: { private: 'fixture-private-profile' } });
+test('get_workout returns power and posture in both streams and timeline, with the temporary debug tool removed', async () => {
+  const { mf } = runtime(true, false, { ...fixture,
+    power_meter: '1,210;1,220;1,230;',
+    runPosture: '0,240,70,65;1,250,75,70;1,65535,65535,255;1,260,80,75;' });
   try {
-    const response = await rpc(mf, 'tools/call', { name: 'debug_raw_streams', arguments: { track_id: String(fixture.trackid), source: 'watch' } });
-    assert.equal(response.status, 200);
-    const envelope = await readMcpResponse(response);
+    const listed = await readMcpResponse(await rpc(mf, 'tools/list'));
+    assert.ok(!listed.result.tools.some((t: { name: string }) => t.name === 'debug_raw_streams'));
+    const envelope = await readMcpResponse(await rpc(mf, 'tools/call', {
+      name: 'get_workout', arguments: { track_id: String(fixture.trackid), source: 'watch' } }));
     assert.equal(envelope.result.isError, undefined);
     const result = JSON.parse(envelope.result.content[0].text);
-    assert.ok(result.stream_keys.includes('unknown_dynamics'));
-    assert.ok(result.stream_keys.includes('empty_stream'));
-    assert.equal(result.streams.power_meter.raw_prefix.length, 8000);
-    assert.equal(result.streams.power_meter.length, 9000);
-    assert.equal(result.streams.power_meter.truncated, true);
-    assert.equal(result.streams.opaque_stream.raw_prefix, '[REDACTED]');
-    assert.equal(result.streams.app_token, undefined);
-    assert.equal(result.streams.email, undefined);
-    assert.equal(result.diagnostics.upstream_http_status.detail, 200);
-    assert.deepEqual(calls.map(c => c.path), ['/v2/registrations/tokens', '/v2/client/login', '/v1/sport/run/detail.json']);
-    for (const secret of [bearer, 'fixture-app-token', 'fixture-access', 'fixture@example.invalid', 'fixture-private-profile']) {
-      assert.ok(!JSON.stringify(envelope).includes(secret));
-    }
+    assert.equal(result.streams.power_meter[1].power_w, 220);
+    assert.equal(result.streams.runPosture[1].stance_time_ms, 250);
+    const at2 = result.timeline.find((v: { offset_s: number }) => v.offset_s === 1);
+    assert.equal(at2.power_w, 210);
+    assert.equal(result.sample_alignment.power_meter.mode, 'delta_seconds');
+    assert.equal(result.sample_alignment.power_meter.time_offset_s, 0);
+    assert.equal(result.sample_alignment.runPosture.time_offset_s, 0);
+    assert.equal(result.sample_alignment.power_meter.input_samples, 3);
+    assert.equal(result.sample_alignment.runPosture.input_samples, 4);
+    assert.equal(at2.stance_time_ms, 250);
+    assert.equal(at2.vertical_oscillation_mm, 75);
+    assert.equal(at2.vertical_ratio_pct, 7);
+    const at5 = result.timeline.find((v: { offset_s: number }) => v.offset_s === 2);
+    assert.equal(at5.stance_time_ms, null);
+    assert.ok(!result.warnings.some((w: string) => w.includes('Unsupported streams')));
+  } finally { await mf.dispose(); }
+});
+
+test('removed debug_raw_streams cannot be called and makes no Zepp requests', async () => {
+  const { mf, calls } = runtime();
+  try {
+    const envelope = await readMcpResponse(await rpc(mf, 'tools/call', {
+      name: 'debug_raw_streams', arguments: { track_id: String(fixture.trackid), source: 'watch' } }));
+    assert.ok(envelope.error || envelope.result?.isError);
+    assert.equal(calls.length, 0);
   } finally { await mf.dispose(); }
 });

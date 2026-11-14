@@ -6,7 +6,7 @@ export class DecodeError extends Error {}
 export type Observation = { offset_s: number; timestamp: string; [key: string]: number | string | null };
 export type DecodedWorkout = ReturnType<typeof decodeWorkout>;
 const positionalFields = ['longitude_latitude', 'altitude', 'accuracy', 'pace'] as const;
-const timedFields = ['heart_rate', 'gait', 'speed', 'distance'] as const;
+const timedFields = ['heart_rate', 'gait', 'speed', 'distance', 'power_meter', 'runPosture'] as const;
 
 function cells(value: unknown, field: string): string[] {
   if (value === undefined || value === null || value === '') return [];
@@ -31,6 +31,8 @@ export function decodeWorkout(detail: Record<string, unknown>, startTime?: strin
   const start = numeric(rawStart, 'trackid', true);
   const streams: Record<string, Observation[]> = {};
   const warnings: string[] = [];
+  const sampleAlignment: Record<string, { mode: 'delta_seconds'; input_samples: number;
+    time_samples: number; time_offset_s: number; zero_delta_samples: number; gap_delta_samples: number }> = {};
   function row(t: number, values: Record<string, number | string | null> = {}): Observation {
     if (t < 0 || !Number.isSafeInteger(t) || !Number.isFinite(new Date((start + t) * 1000).getTime())) {
       throw new DecodeError('time: timestamp outside supported range');
@@ -73,15 +75,22 @@ export function decodeWorkout(detail: Record<string, unknown>, startTime?: strin
     const input = cells(detail[field], field);
     if (!input.length) continue;
     elapsed = 0;
+    const ownClock = field === 'power_meter' || field === 'runPosture';
+    if (ownClock) sampleAlignment[field] = { mode: 'delta_seconds', input_samples: input.length,
+      time_samples: times.length, time_offset_s: 0, zero_delta_samples: 0, gap_delta_samples: 0 };
     let total = 0;
     streams[field] = input.map(cell => {
       const cols = cell.split(',');
-      if (field === 'gait' ? ![3, 4].includes(cols.length) : cols.length !== 2) {
+      if (field === 'gait' ? ![3, 4].includes(cols.length) : cols.length !== (field === 'runPosture' ? 4 : 2)) {
         throw new DecodeError(`${field}: unexpected column count`);
       }
-      const dt = numeric(cols[0] || '1', field, true);
+      const dt = numeric(ownClock ? cols[0] : cols[0] || '1', field, true);
       if (dt < 0) throw new DecodeError(`${field}: negative time delta`);
       elapsed += dt;
+      if (ownClock) {
+        if (dt === 0) sampleAlignment[field].zero_delta_samples++;
+        if (dt > 1) sampleAlignment[field].gap_delta_samples++;
+      }
       let values: Record<string, number | string | null>;
       if (field === 'heart_rate') {
         total += numeric(cols[1], field, true);
@@ -93,6 +102,17 @@ export function decodeWorkout(detail: Record<string, unknown>, startTime?: strin
         const cadence = supplied ? numeric(cols[3], field) : dt > 0 ? steps * 60 / dt : null;
         values = { steps: total, step_delta: steps, stride_m: numeric(cols[2], field) / 100,
           cadence_spm: cadence, cadence_source: supplied ? 'gait_frequency' : 'interval_steps' };
+      } else if (field === 'power_meter') {
+        // Local FIT regression proves column 1 is a seconds delta, not a flag.
+        // The first power delta is typically 1; posture typically starts at 0.
+        values = { power_w: numeric(cols[1], field), power_time_delta_s: dt };
+      } else if (field === 'runPosture') {
+        const stance = numeric(cols[1], field, true);
+        const oscillation = numeric(cols[2], field, true);
+        const ratio = numeric(cols[3], field, true);
+        values = { stance_time_ms: stance === 65535 ? null : stance,
+          vertical_oscillation_mm: oscillation === 65535 ? null : oscillation,
+          vertical_ratio_pct: ratio === 255 ? null : ratio / 10, run_posture_time_delta_s: dt };
       } else if (field === 'distance') {
         total += numeric(cols[1], field);
         values = { distance_m: total };
@@ -111,9 +131,9 @@ export function decodeWorkout(detail: Record<string, unknown>, startTime?: strin
       timeline.set(t, { ...timeline.get(t), ...observation });
     }
   }
-  const unsupported = ['cadence', 'power_meter', 'stroke_speed', 'air_pressure_altitude', 'correct_altitude'].filter(k => detail[k]);
+  const unsupported = ['cadence', 'stroke_speed', 'air_pressure_altitude', 'correct_altitude'].filter(k => detail[k]);
   if (unsupported.length) warnings.push(`Unsupported streams: ${unsupported.join(', ')}`);
-  return { start_time_unix: start, streams,
+  return { start_time_unix: start, streams, sample_alignment: sampleAlignment,
     sample_counts: Object.fromEntries(Object.entries(streams).map(([k, v]) => [k, v.length])),
     timeline: [...timeline.values()].sort((a, b) => a.offset_s - b.offset_s), warnings };
 }

@@ -19,7 +19,7 @@ for (const file of files) {
   const content = readFileSync(file, 'utf8');
   for (const [name, rule] of rules) if (rule.test(content)) findings.push([file, name]);
 }
-const candidates = ['.env', '.env.production', '.dev.vars', '.dev.vars.local', '.wrangler/state/test', 'output/private.json', 'dist/index.js'];
+const candidates = ['.env', '.env.production', '.dev.vars', '.dev.vars.local', '.wrangler/state/test', 'output/private.json', 'dist/index.js', 'test/fixtures/local/private.json'];
 const ignored = execFileSync('git', ['check-ignore', '--stdin'], { input: candidates.join('\n') + '\n', encoding: 'utf8' }).trim().split('\n');
 for (const file of candidates) if (!ignored.includes(file)) findings.push([file, 'not-ignored']);
 console.log(JSON.stringify({ scanned_files: files.length, ignore_checks: candidates.length, findings }));
