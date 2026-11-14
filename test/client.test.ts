@@ -286,3 +286,90 @@ test('unknown login region without any usable response route cannot silently cho
   assert.equal(client.diagnostics().resolved_region, null);
   assert.ok(!JSON.stringify(client.diagnostics()).includes('fixture-must-not-emit'));
 });
+
+for (const stage of ['detail', 'history'] as const) {
+  for (const status of [401, 403]) {
+    test(`${stage} ${status} reauthenticates once and retries with the new session and route`, async () => {
+      let logins = 0, tokens = 0, gets = 0;
+      const requests: URL[] = [];
+      const client = new ZeppClient(config, mock((url, init) => {
+        const parsed = new URL(url);
+        if (parsed.pathname.endsWith('/tokens')) {
+          tokens++;
+          return new Response(null, { status: 303, headers: { location: 'https://example.invalid/?access=fixture-access' } });
+        }
+        if (parsed.pathname.endsWith('/login')) {
+          logins++;
+          return json({ region: logins === 1 ? 'us2' : 'de2', token_info: { app_token: `fixture-token-${logins}`, user_id: logins === 1 ? 42 : 43 } });
+        }
+        gets++; requests.push(parsed);
+        assert.equal((init.headers as Record<string, string>).apptoken, `fixture-token-${logins}`);
+        return gets === 1 ? new Response('fixture-private-error', { status })
+          : json({ data: stage === 'detail' ? { trackid: 1700000000 } : { summary: [], next: -1 } });
+      }));
+      await client.authenticate();
+      if (stage === 'detail') assert.equal((await client.workoutDetail('1700000000', 'watch')).trackid, 1700000000);
+      else assert.equal((await client.listWorkouts('1700000001')).count, 0);
+      assert.deepEqual({ logins, tokens, gets }, { logins: 2, tokens: 2, gets: 2 });
+      assert.equal(requests[0].hostname, 'api-mifit-us2.zepp.com');
+      assert.equal(requests[1].hostname, 'api-mifit-de2.zepp.com');
+      assert.equal(requests[1].searchParams.get('userid'), '43');
+      assert.equal(requests[1].searchParams.get('trackid'), stage === 'detail' ? '1700000000' : '1700000001');
+      if (stage === 'detail') assert.equal(requests[1].searchParams.get('source'), 'watch');
+      const diagnostics = client.diagnostics();
+      assert.equal(diagnostics.retry_count, 1);
+      assert.equal(diagnostics.last_retry?.stage, stage);
+      assert.equal(diagnostics.last_retry?.http_status, status);
+      assert.ok(Number.isFinite(Date.parse(diagnostics.last_retry!.at)));
+      assert.equal(diagnostics.upstream_http_status[stage], 200);
+      for (const secret of ['fixture-access', 'fixture-token-1', 'fixture-token-2', 'fixture-private-error', config.ZEPP_PASSWORD]) {
+        assert.ok(!JSON.stringify(diagnostics).includes(secret));
+      }
+    });
+    test(`${stage} persistent ${status} stops after one retry without poisoning subsequent authentication`, async () => {
+      let logins = 0, tokens = 0, gets = 0;
+      const client = new ZeppClient(config, mock(url => {
+        if (url.includes('/tokens')) { tokens++; return new Response(null, { status: 303, headers: { location: 'https://example.invalid/?access=fixture-access' } }); }
+        if (url.includes('/login')) { logins++; return json({ token_info: { app_token: `fixture-token-${logins}`, user_id: 42 } }); }
+        gets++; return json({ message: 'fixture-private-error' }, status);
+      }));
+      const request = () => stage === 'detail' ? client.workoutDetail('1700000000', 'watch') : client.listWorkouts();
+      await assert.rejects(request(), e => e instanceof ZeppError && e.stage === stage && e.http_status === status && e.reason === 'upstream_rejected');
+      assert.deepEqual({ logins, tokens, gets }, { logins: 2, tokens: 2, gets: 2 });
+      assert.equal(client.diagnostics().retry_count, 1);
+      // Both rejected tokens were cleared; a new explicit call can log in immediately.
+      assert.equal((await client.authenticate()).authenticated, true);
+      assert.deepEqual({ logins, tokens, gets }, { logins: 3, tokens: 3, gets: 2 });
+    });
+  }
+}
+
+test('reauthentication login failure retains auth cooldown and does not retry the data request', async () => {
+  let tokens = 0, logins = 0, gets = 0;
+  const client = new ZeppClient(config, mock(url => {
+    if (url.includes('/tokens')) {
+      tokens++;
+      return tokens === 1 ? new Response(null, { status: 303, headers: { location: 'https://example.invalid/?access=fixture-access' } }) : json({ error_code: 429 }, 429);
+    }
+    if (url.includes('/login')) { logins++; return json({ token_info: { app_token: 'fixture-token', user_id: 42 } }); }
+    gets++; return json({ code: -1 }, 401);
+  }));
+  for (let i = 0; i < 2; i++) {
+    await assert.rejects(client.workoutDetail('1700000000', 'watch'), e => e instanceof ZeppError && e.stage === 'auth_tokens' && e.http_status === 429);
+  }
+  assert.deepEqual({ tokens, logins, gets }, { tokens: 2, logins: 1, gets: 1 });
+});
+
+test('cached authentication identifies cache use and labels upstream statuses as last observed', async () => {
+  let n = 0;
+  const client = new ZeppClient(config, mock(() => ++n === 1
+    ? new Response(null, { status: 303, headers: { location: 'https://example.invalid/?access=fixture-access' } })
+    : json({ token_info: { app_token: 'fixture-token', user_id: 42 } })));
+  assert.equal((await client.authenticate()).diagnostics.authentication_source, 'login');
+  const cached = await client.authenticate();
+  assert.equal(cached.diagnostics.authentication_source, 'cache');
+  assert.equal(cached.diagnostics.upstream_status_scope, 'last_observed');
+  assert.equal(cached.diagnostics.retry_count, 0);
+  assert.equal(cached.diagnostics.last_retry, null);
+  assert.equal(n, 2);
+});

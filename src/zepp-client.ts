@@ -58,6 +58,9 @@ export class ZeppClient {
   #loginRegionShape = 'missing';
   #routingWarnings: string[] = [];
   #pending?: Promise<void>;
+  #authSource = 'not_authenticated';
+  #retryCount = 0;
+  #lastRetry: { stage: string; at: string; http_status: number } | null = null;
   #failure?: { until: number; error: ZeppError };
   constructor(config: ZeppConfig, fetcher: Fetcher = fetch) {
     this.#config = { ...config };
@@ -69,7 +72,9 @@ export class ZeppClient {
       .every(k => c[k] === this.#config[k]);
   }
   diagnostics() {
-    return { implementation_version: '0.2.9', user_id: this.#userId ?? null,
+    return { implementation_version: '0.2.10', user_id: this.#userId ?? null,
+      authentication_source: this.#authSource, upstream_status_scope: 'last_observed',
+      retry_count: this.#retryCount, last_retry: this.#lastRetry ? { ...this.#lastRetry } : null,
       account_profile: { ...this.#profile },
       configured: { auth_region: normalizeRegion(this.#config.ZEPP_REGION ?? 'us2') ?? 'invalid',
         data_region: this.#config.ZEPP_DATA_REGION === 'auto' || !this.#config.ZEPP_DATA_REGION ? 'auto' : normalizeRegion(this.#config.ZEPP_DATA_REGION) ?? 'invalid',
@@ -104,7 +109,7 @@ export class ZeppClient {
   }
   async #request(stage: string, url: string, init: RequestInit): Promise<Response> {
     try {
-      // No redirects (including auth redirects), no retry, hard deadline.
+      // No redirects (including auth redirects); retry policy belongs to #get. Hard deadline.
       this.#statuses[stage] = null;
       const response = await this.#fetch(url, { ...init, redirect: 'manual', signal: AbortSignal.timeout(20000) });
       this.#statuses[stage] = response.status;
@@ -127,11 +132,20 @@ export class ZeppClient {
     return data;
   }
   async authenticate() {
-    if (this.#token && Date.now() < this.#expires) return { authenticated: true as const, diagnostics: this.diagnostics() };
-    if (this.#failure && Date.now() < this.#failure.until) throw this.#failure.error;
+    if (this.#token && Date.now() < this.#expires) {
+      this.#authSource = 'cache';
+      return { authenticated: true as const, diagnostics: this.diagnostics() };
+    }
+    this.#authSource = this.#pending ? 'shared_login' : 'login';
+    if (this.#failure && Date.now() < this.#failure.until) {
+      this.#authSource = 'failure_cache';
+      throw this.#failure.error;
+    }
     this.#pending ??= this.#login().catch(error => {
       const safe = error instanceof ZeppError ? error : new ZeppError('auth', null, 'unexpected_failure');
-      this.#failure = { until: Date.now() + 300000, error: safe };
+      if (['auth_tokens', 'auth_login'].includes(safe.stage)) {
+        this.#failure = { until: Date.now() + 300000, error: safe };
+      }
       throw safe;
     }).finally(() => { this.#pending = undefined; });
     await this.#pending;
@@ -220,20 +234,34 @@ export class ZeppClient {
     this.#token = info.app_token; this.#userId = String(info.user_id);
     if (typeof info.login_token === 'string') this.#redactionSecrets.push(info.login_token);
     this.#profile = accountProfile(result, value => this.redact(value) as string);
+    this.#failure = undefined;
     this.#expires = Date.now() + 15 * 60000;
   }
   async #get(stage: string, path: string, params: Record<string, string>): Promise<JsonObject> {
-    await this.authenticate();
-    const url = new URL(path, this.#dataOrigin!);
-    url.search = new URLSearchParams({ ...params, userid: this.#userId! }).toString();
-    const response = await this.#request(stage, url.toString(), { method: 'GET', headers: {
-      apptoken: this.#token!, appname: 'com.huami.midong', appplatform: 'android_phone', 'user-agent': userAgent } });
-    if ([401, 403].includes(response.status)) {
-      this.#token = undefined;
-      this.#failure = { until: Date.now() + 300000, error: new ZeppError(stage, response.status, 'session_rejected_no_retry') };
+    // Each data request gets at most two attempts, including its initial request.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await this.authenticate();
+      const token = this.#token!;
+      // Rebuild routing and userid after reauthentication; either may have changed.
+      const url = new URL(path, this.#dataOrigin!);
+      url.search = new URLSearchParams({ ...params, userid: this.#userId! }).toString();
+      const response = await this.#request(stage, url.toString(), { method: 'GET', headers: {
+        apptoken: token, appname: 'com.huami.midong', appplatform: 'android_phone', 'user-agent': userAgent } });
+      if ([401, 403].includes(response.status)) {
+        // A concurrent request may already have obtained a newer session.
+        if (this.#token === token) { this.#token = undefined; this.#expires = 0; }
+        if (attempt === 0) {
+          this.#retryCount++;
+          this.#lastRetry = { stage, at: new Date().toISOString(), http_status: response.status };
+          await response.body?.cancel();
+          continue;
+        }
+      }
+      return this.#json(stage, response);
     }
-    return this.#json(stage, response);
+    throw new ZeppError(stage, null, 'retry_limit_exceeded');
   }
+
   async listWorkouts(cursor?: string) {
     if (cursor !== undefined && !/^\d{1,12}$/.test(cursor)) throw new ZeppError('history', null, 'invalid_cursor');
     this.#historyCursor = cursor ?? null;

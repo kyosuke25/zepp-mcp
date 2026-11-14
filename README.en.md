@@ -6,7 +6,7 @@ A personal MCP server that reads your workouts through Zepp's **unofficial cloud
 
 **This is not an official project of Zepp Health, Huami, or Amazfit and is not affiliated with those companies.** The unofficial API may change or become unavailable without notice. The software is provided under the MIT License, without warranties regarding operation or data accuracy.
 
-The current version is `0.2.9`. A public clone runs 36 tests using synthetic data and mocked network requests. Environments with the private local fixture also run four FIT regression tests. Authentication, retrieval of 39 workout records, and detailed decoding of the Fukuoka Marathon into per-second streams, including cadence, stride length, power, stance time, vertical oscillation, and vertical ratio, have been verified with a real account. This does not guarantee compatibility with every account, region, or device.
+The current version is `0.2.10`. A public clone runs 46 tests using synthetic data and mocked network requests. Environments with the private local fixture also run four FIT regression tests. Authentication, retrieval of 39 workout records, and detailed decoding of the Fukuoka Marathon into per-second streams, including cadence, stride length, power, stance time, vertical oscillation, and vertical ratio, have been verified with a real account. This does not guarantee compatibility with every account, region, or device.
 
 ## Prerequisites
 
@@ -146,7 +146,7 @@ An MCP `initialize` or `tools/list` POST with the Bearer header returning HTTP 2
 | `get_workout` | `track_id`, `source` | Fetch and decode one workout, including power and running dynamics, using the ID and source from history |
 | `run_poc` | None | Authenticate → fetch one history page → fetch the first workout's details → decode |
 
-For the first live check, run `run_poc` **once**. If history is empty, detail retrieval is skipped. On failure, inspect the diagnostics instead of repeatedly calling with guessed settings. Zepp API calls other than authentication are GET requests only. There are no data writes, automatic pagination, or automatic retries.
+For the first live check, run `run_poc` **once**. If history is empty, detail retrieval is skipped. On failure, inspect the diagnostics instead of repeatedly calling with guessed settings. Zepp API calls other than authentication are GET requests only. There are no data writes or automatic pagination. Only HTTP 401/403 during history or detail retrieval invalidates the session and triggers reauthentication and at most one retry of the same data request. A second rejection stops the request; data-stage rejections are not cached as authentication failures for five minutes. Login-stage failures (auth_tokens/auth_login) are cached for five minutes and are not automatically retried.
 
 
 This version uses Bearer-header authentication. It has no OAuth login page, automatic client registration, or legacy standalone SSE endpoint. Clients that cannot set custom headers require additional support.
@@ -170,7 +170,7 @@ To check decoding without contacting a real account, run `npm run fixture`. Its 
 
 ## Diagnostics and data format
 
-Authentication, history, and PoC responses include `diagnostics`: implementation version, user_id, display name when available, configuration, resolved region, history host, routing source, and upstream HTTP statuses. `login_region_shape` and `routing_warnings` also identify unrecognized supplementary hints. Raw responses, Location URLs, passwords, and tokens are not returned. Treat real IDs, display names, and location data as personal information; do not paste them into public issues.
+Authentication, history, detail, and PoC responses include `diagnostics`: implementation version, user_id, display name when available, configuration, resolved region, history host, routing source, and upstream HTTP statuses. `login_region_shape` and `routing_warnings` also identify unrecognized supplementary hints. `retry_count` is the cumulative retry count within the isolate; `last_retry` contains the last retry stage, UTC timestamp, and HTTP status. `authentication_source` identifies the last authentication path: `login`, `shared_login` (waiting for a concurrent login), `cache` (using an unexpired session), or `failure_cache` (a cached login failure). As indicated by `upstream_status_scope: last_observed`, upstream HTTP statuses are the last observed values and do not imply upstream revalidation when using the cache. Sessions are not coordinated across isolates, so another login can still invalidate a refreshed session. Raw responses, Location URLs, passwords, and tokens are not returned. Treat real IDs, display names, and location data as personal information; do not paste them into public issues.
 
 The display-name `status` is `available`, `not_returned`, or `withheld`; the name is null when unavailable. No additional profile API is called. `authentication_method: email_password` describes the Worker's authentication method, not detection of Google sign-in in the app.
 

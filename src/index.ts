@@ -10,7 +10,7 @@ const id = z.string().regex(/^\d{1,12}$/);
 const sourceSchema = z.string().min(1).max(200);
 
 export function createServer(client: ZeppClient) {
-  const server = new McpServer({ name: 'zepp-mcp', version: '0.2.9' });
+  const server = new McpServer({ name: 'zepp-mcp', version: '0.2.10' });
   const safeResult = async (fn: () => Promise<unknown>) => {
     try { return { content: [{ type: 'text' as const, text: JSON.stringify(client.redact(await fn())) }] }; }
     catch (error) {
@@ -31,10 +31,12 @@ export function createServer(client: ZeppClient) {
   server.registerTool('get_workout', {
     description: 'Fetch one workout using track_id and source from history; decode GPS, HR, altitude, gait, cadence, power and running dynamics into sparse time series.',
     inputSchema: { track_id: id, source: sourceSchema }, annotations,
-  }, args => safeResult(async () => ({ track_id: args.track_id,
-    ...decodeWorkout(await client.workoutDetail(args.track_id, args.source), args.track_id) })));
+  }, args => safeResult(async () => {
+    const detail = await client.workoutDetail(args.track_id, args.source);
+    return { track_id: args.track_id, ...decodeWorkout(detail, args.track_id), diagnostics: client.diagnostics() };
+  }));
   server.registerTool('run_poc', {
-    description: 'Run the minimal proof once: authenticate, fetch ONE history page and ONE workout detail, decode samples including cadence. Stop on first error; never paginate or retry.',
+    description: 'Run the minimal proof once: authenticate, fetch ONE history page and ONE workout detail, decode samples including cadence. Never paginate. History/detail HTTP 401/403 triggers reauthentication and at most one retry per data request.',
     inputSchema: {}, annotations,
   }, () => safeResult(async () => {
     await client.authenticate();
@@ -64,7 +66,7 @@ export function createWorker(fetcher: typeof fetch = fetch) {
   return {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
       const path = new URL(request.url).pathname;
-      if (path === '/health' && request.method === 'GET') return Response.json({ ok: true });
+      if (path === '/health' && request.method === 'GET') return Response.json({ ok: true, implementation_version: '0.2.10' });
       if (path !== '/mcp') return new Response('Not found', { status: 404 });
       // Personal health data must not be publicly callable. Fail closed.
       if (!env.MCP_AUTH_TOKEN || env.MCP_AUTH_TOKEN.length < 32) return new Response('MCP access secret missing or too short', { status: 503 });
