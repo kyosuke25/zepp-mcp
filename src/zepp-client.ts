@@ -1,3 +1,4 @@
+import { publicUpstreamData } from './upstream-data';
 import { accountProfile, emptyAccountProfile } from './account-profile';
 import { apiOrigin, countryCode, dataRoute, loginRouting, normalizeRegion } from './routing';
 /** Independent Workers-compatible client; no MCP imports.
@@ -72,7 +73,7 @@ export class ZeppClient {
       .every(k => c[k] === this.#config[k]);
   }
   diagnostics() {
-    return { implementation_version: '0.2.12', user_id: this.#userId ?? null,
+    return { implementation_version: '0.2.13', user_id: this.#userId ?? null,
       authentication_source: this.#authSource, upstream_status_scope: 'last_observed',
       retry_count: this.#retryCount, last_retry: this.#lastRetry ? { ...this.#lastRetry } : null,
       account_profile: { ...this.#profile },
@@ -270,13 +271,10 @@ export class ZeppClient {
     const payload = await this.#get('history', '/v1/sport/run/history.json', cursor === undefined ? {} : { trackid: cursor });
     const data = object(payload.data);
     if (!Array.isArray(data.summary)) throw new ZeppError('history', 200, 'missing_summary_list');
-    // Public output is an allowlist; no raw response or token-bearing metadata.
-    const keys = ['trackid', 'source', 'type', 'end_time', 'distance', 'sport_time', 'calorie', 'avg_heart_rate'];
+    // Full summary surface: remove authentication material, never select metric keys.
     const items: JsonObject[] = data.summary.map(item => {
-      const record = object(item);
-      return { ...Object.fromEntries(keys.filter(k => typeof record[k] === 'string' || typeof record[k] === 'number').map(k => [k, record[k]])),
-        ...(record.gearId === null || typeof record.gearId === 'string' ||
-          (typeof record.gearId === 'number' && Number.isFinite(record.gearId)) ? { gearId: record.gearId } : {}) };
+      if (!item || typeof item !== 'object' || Array.isArray(item)) throw new ZeppError('history', 200, 'invalid_summary_item');
+      return publicUpstreamData(item) as JsonObject;
     });
     const next = data.next;
     return { items, count: items.length, pages_requested: 1, diagnostics: this.diagnostics(),

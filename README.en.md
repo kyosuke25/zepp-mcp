@@ -6,7 +6,7 @@ A personal MCP server that reads your workouts through Zepp's **unofficial cloud
 
 **This is not an official project of Zepp Health, Huami, or Amazfit and is not affiliated with those companies.** The unofficial API may change or become unavailable without notice. The software is provided under the MIT License, without warranties regarding operation or data accuracy.
 
-The current version is `0.2.12`. A public clone runs 52 tests using synthetic data and mocked network requests. Environments with the private local fixture also run four FIT regression tests. Authentication, retrieval of 39 workout records, and detailed decoding of the Fukuoka Marathon into per-second streams, including cadence, stride length, power, stance time, vertical oscillation, and vertical ratio, have been verified with a real account. This does not guarantee compatibility with every account, region, or device.
+The current version is `0.2.13`. A public clone runs 53 tests using synthetic data and mocked network requests. Environments with the private local fixture also run four FIT regression tests. Authentication, retrieval of 39 workout records, and detailed decoding of the Fukuoka Marathon into per-second streams, including cadence, stride length, power, stance time, vertical oscillation, and vertical ratio, have been verified with a real account. This does not guarantee compatibility with every account, region, or device.
 
 ## Prerequisites
 
@@ -142,7 +142,7 @@ An MCP `initialize` or `tools/list` POST with the Bearer header returning HTTP 2
 | Tool | Arguments | Behavior |
 | --- | --- | --- |
 | `zepp_authenticate` | None | Authenticate to Zepp and return account/region diagnostics |
-| `list_workouts` | Optional `cursor_track_id` | One history page, preserving upstream summary `gearId`; pass the returned `next_track_id` for the next page |
+| `list_workouts` | Optional `cursor_track_id` | One history page preserving every upstream summary field except secrets; pass the returned `next_track_id` for the next page |
 | `get_workout` | `track_id`, `source` | Fetch one detail and decode power and running dynamics; return available shoe attributes under `metadata` |
 | `run_poc` | None | Authenticate → fetch one history page → fetch the first workout's details → decode |
 
@@ -153,7 +153,7 @@ This version uses Bearer-header authentication. It has no OAuth login page, auto
 
 ### Shoes and gear
 
-`list_workouts.items[].gearId` preserves the upstream summary value (string, number, or null). An absent key is omitted. Neither a null selection nor an absent key proves that no shoes are registered. Shoe names are never inferred from IDs.
+`list_workouts.items[]` preserves every upstream summary field with its original type, including `gearId`. An absent key is omitted. Neither a null selection nor an absent key proves that no shoes are registered. Shoe names are never inferred from IDs.
 
 `get_workout.metadata` and `run_poc.workout.metadata` contain available top-level detail-data shoe attributes such as `gearId`, `shoe_id`, `gear`, and `shoe`. Original key names and scalar values are preserved; arrays and objects are preserved too, with authentication-related keys removed recursively. When shoe data is absent, no shoe keys are added. These attributes are not time-series streams. A history ID is not copied into detail metadata.
 
@@ -164,6 +164,10 @@ The My Gear list endpoint has not been identified, so `list_gear` is not provide
 Since 0.2.12, `field_inventory` includes every detail key except authentication fields. Entries contain `value_type`, `decode_status`, `sample_count`, and `count_basis`. Known streams are decoded into `streams` and `timeline` as before; every other field is retained with its original value under `metadata`. Unknown strings and arrays are also returned under `undecoded_streams` with their keys, counts, and `raw` values. Unsupported warnings no longer mean that data is discarded. The same handling covers unknown sport-specific fields such as HYROX, strength training, and swimming.
 
 For unknown strings, the count is the number of semicolon-delimited record slots (excluding a trailing separator and retaining interior empty slots); arrays use their element count. These counts do not establish seconds or semantic samples. Objects, numbers, and other values use `sample_count: null` and `count_basis: not_applicable`. Units, column meanings, and timestamps of unknown formats are not guessed: raw values remain available for later validation. Treat raw values as health and personal data too.
+
+### All history fields
+
+Since 0.2.13, workout summaries have no field allowlist. New fields, sport-specific values, arrays, objects, nulls, and booleans are retained. Password, token, secret-key, authorization-header, cookie, and authentication-session keys are excluded recursively; known secret values are redacted before MCP output. Workout information such as `training_sessions` is retained, while authentication fields such as `session_id` are excluded. Personal information such as real IDs, display names, and emails is distinct from secret values under this policy. Use it only through your authenticated MCP clients and keep real responses out of public issues and repositories.
 
 ## Local development
 

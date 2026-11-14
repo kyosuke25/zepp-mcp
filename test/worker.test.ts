@@ -60,7 +60,7 @@ test('workerd serves MCP initialization, tools and complete PoC with four mocked
     assert.equal(result.diagnostics.resolved_region, 'de2');
     assert.equal(result.diagnostics.user_id, '42');
     assert.equal(result.diagnostics.account_profile.display_name, 'Fixture Runner');
-    assert.equal(result.diagnostics.implementation_version, '0.2.12');
+    assert.equal(result.diagnostics.implementation_version, '0.2.13');
     assert.equal(result.diagnostics.retry_count, 0);
     assert.equal(result.diagnostics.last_retry, null);
     assert.equal(result.diagnostics.auth_country, 'JP');
@@ -83,7 +83,7 @@ test('MCP missing/wrong bearer fails closed and health never calls upstream', as
     try {
       const health = await mf.dispatchFetch('http://localhost/health');
       assert.equal(health.status, 200);
-      assert.deepEqual(await health.json(), { ok: true, implementation_version: '0.2.12' });
+      assert.deepEqual(await health.json(), { ok: true, implementation_version: '0.2.13' });
       const response = await mf.dispatchFetch('http://localhost/mcp', { method: 'POST' });
       assert.equal(response.status, withSecret ? 401 : 503);
       assert.equal(calls.length, 0);
@@ -122,7 +122,7 @@ test('get_workout returns power and posture in both streams and timeline, with t
     assert.equal(JSON.parse(envelope.result.content[0].text).metadata.gearId, 'fixture-gear-a');
     assert.deepEqual(JSON.parse(envelope.result.content[0].text).metadata.shoe, { id: 7, name: 'Fixture shoe' });
     assert.equal(JSON.parse(envelope.result.content[0].text).metadata.gearToken, undefined);
-    assert.equal(JSON.parse(envelope.result.content[0].text).diagnostics.implementation_version, '0.2.12');
+    assert.equal(JSON.parse(envelope.result.content[0].text).diagnostics.implementation_version, '0.2.13');
     const result = JSON.parse(envelope.result.content[0].text);
     assert.equal(result.streams.power_meter[1].power_w, 220);
     assert.equal(result.streams.runPosture[1].stance_time_ms, 250);
