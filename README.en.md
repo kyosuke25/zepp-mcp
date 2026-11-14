@@ -6,7 +6,7 @@ A personal MCP server that reads your workouts through Zepp's **unofficial cloud
 
 **This is not an official project of Zepp Health, Huami, or Amazfit and is not affiliated with those companies.** The unofficial API may change or become unavailable without notice. The software is provided under the MIT License, without warranties regarding operation or data accuracy.
 
-The current version is `0.2.3`. It has 26 tests using synthetic data and mocked network requests. This does not guarantee compatibility with every account, region, or device. End-to-end validation of real workout retrieval and decoding is still in progress.
+The current version is `0.2.3`. It has 26 tests using synthetic data and mocked network requests. Authentication, retrieval of 39 workout records, and detailed decoding of the Fukuoka Marathon into per-second streams, including cadence and stride length, have been verified with a real account. This does not guarantee compatibility with every account, region, or device.
 
 ## Prerequisites
 
