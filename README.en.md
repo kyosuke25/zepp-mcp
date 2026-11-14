@@ -6,7 +6,7 @@ A personal MCP server that reads your workouts through Zepp's **unofficial cloud
 
 **This is not an official project of Zepp Health, Huami, or Amazfit and is not affiliated with those companies.** The unofficial API may change or become unavailable without notice. The software is provided under the MIT License, without warranties regarding operation or data accuracy.
 
-The current version is `0.2.3`. It has 26 tests using synthetic data and mocked network requests. Authentication, retrieval of 39 workout records, and detailed decoding of the Fukuoka Marathon into per-second streams, including cadence and stride length, have been verified with a real account. This does not guarantee compatibility with every account, region, or device.
+The current version is `0.2.4`. It has 30 tests using synthetic data and mocked network requests. Authentication, retrieval of 39 workout records, and detailed decoding of the Fukuoka Marathon into per-second streams, including cadence and stride length, have been verified with a real account. This does not guarantee compatibility with every account, region, or device.
 
 ## Prerequisites
 
@@ -145,8 +145,11 @@ An MCP `initialize` or `tools/list` POST with the Bearer header returning HTTP 2
 | `list_workouts` | Optional `cursor_track_id` | Fetch one history page; pass the returned `next_track_id` for the next page |
 | `get_workout` | `track_id`, `source` | Fetch and decode one workout using the ID and source from history |
 | `run_poc` | None | Authenticate → fetch one history page → fetch the first workout's details → decode |
+| `debug_raw_streams` | `track_id`, `source` | Temporary diagnostic: return all field names/types and the first 8000 characters plus full length of each string-stream candidate from one detail response |
 
 For the first live check, run `run_poc` **once**. If history is empty, detail retrieval is skipped. On failure, inspect the diagnostics instead of repeatedly calling with guessed settings. Zepp API calls other than authentication are GET requests only. There are no data writes, automatic pagination, or automatic retries.
+
+`debug_raw_streams` is temporary and will be removed after comparison with FIT data. `fields` lists every field's key and type; `stream_keys` and `streams` cover every string field, including empty strings, except metadata and sensitive fields. Each entry has `raw_prefix`, `length` in Unicode characters, and `truncated`. `excluded_fields` explains exclusions for non-string, metadata, and sensitive fields. It does not decode data or fetch additional history. Results contain real workout/location data: do not post them to public issues or commit them to Git. Additional decoding of power and running dynamics has not yet been implemented.
 
 This version uses Bearer-header authentication. It has no OAuth login page, automatic client registration, or legacy standalone SSE endpoint. Clients that cannot set custom headers require additional support.
 

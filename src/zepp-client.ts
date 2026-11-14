@@ -69,7 +69,7 @@ export class ZeppClient {
       .every(k => c[k] === this.#config[k]);
   }
   diagnostics() {
-    return { implementation_version: '0.2.3', user_id: this.#userId ?? null,
+    return { implementation_version: '0.2.4', user_id: this.#userId ?? null,
       account_profile: { ...this.#profile },
       configured: { auth_region: normalizeRegion(this.#config.ZEPP_REGION ?? 'us2') ?? 'invalid',
         data_region: this.#config.ZEPP_DATA_REGION === 'auto' || !this.#config.ZEPP_DATA_REGION ? 'auto' : normalizeRegion(this.#config.ZEPP_DATA_REGION) ?? 'invalid',

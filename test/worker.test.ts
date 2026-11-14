@@ -6,7 +6,7 @@ import fixture from './fixtures/workout.json';
 
 // Public synthetic credentials only; outboundService intercepts EVERY subrequest.
 const bearer = 'fixture-mcp-bearer-000000000000000000';
-function runtime(withSecret = true, emptyHistory = false) {
+function runtime(withSecret = true, emptyHistory = false, detail: Record<string, unknown> = fixture) {
   const calls: { path: string; method: string }[] = [];
   const mf = new Miniflare(convertV4MiniflareOptions({ modules: true, scriptPath: 'dist/index.js',
     compatibilityDate: '2026-11-14', compatibilityFlags: ['nodejs_compat'],
@@ -25,7 +25,7 @@ function runtime(withSecret = true, emptyHistory = false) {
         return MFResponse.json({ code: 1,
           data: { summary: emptyHistory ? [] : [{ trackid: String(fixture.trackid), source: 'watch' }], next: -1 } });
       }
-      if (url.pathname === '/v1/sport/run/detail.json') return MFResponse.json({ code: 1, data: fixture });
+      if (url.pathname === '/v1/sport/run/detail.json') return MFResponse.json({ code: 1, data: detail });
       throw Error('Unexpected outbound request');
     },
   }));
@@ -46,7 +46,7 @@ test('workerd serves MCP initialization, tools and complete PoC with four mocked
     assert.equal(initialized.result.serverInfo.name, 'zepp-mcp');
     const list = await rpc(mf, 'tools/list');
     const listed = await readMcpResponse(list) as any;
-    assert.equal(listed.result.tools.length, 4);
+    assert.equal(listed.result.tools.length, 5);
     assert.equal(calls.length, 0); // Discovery never contacts Zepp.
     const response = await rpc(mf, 'tools/call', { name: 'run_poc', arguments: {} });
     assert.equal(response.status, 200);
@@ -59,7 +59,7 @@ test('workerd serves MCP initialization, tools and complete PoC with four mocked
     assert.equal(result.diagnostics.resolved_region, 'de2');
     assert.equal(result.diagnostics.user_id, '42');
     assert.equal(result.diagnostics.account_profile.display_name, 'Fixture Runner');
-    assert.equal(result.diagnostics.implementation_version, '0.2.3');
+    assert.equal(result.diagnostics.implementation_version, '0.2.4');
     assert.equal(result.diagnostics.auth_country, 'JP');
     assert.deepEqual(result.diagnostics.routing_warnings, ['unrecognized_login_region']);
     assert.equal(result.diagnostics.upstream_http_status.history, 200);
@@ -100,5 +100,32 @@ test('empty-history run_poc still includes routing diagnostics and stops before 
     assert.equal(result.diagnostics.upstream_http_status.history, 200);
     assert.equal(result.diagnostics.upstream_http_status.detail, null);
     assert.equal(calls.length, 3);
+  } finally { await mf.dispose(); }
+});
+
+test('debug_raw_streams uses only auth plus one detail, includes unknown streams and masks secrets', async () => {
+  const { mf, calls } = runtime(true, false, { ...fixture,
+    power_meter: '1,250;'.repeat(1500), unknown_dynamics: '0,12,34;1,56,78',
+    empty_stream: '', opaque_stream: 'fixture-app-token', email: 'fixture@example.invalid',
+    app_token: 'fixture-app-token', profile: { private: 'fixture-private-profile' } });
+  try {
+    const response = await rpc(mf, 'tools/call', { name: 'debug_raw_streams', arguments: { track_id: String(fixture.trackid), source: 'watch' } });
+    assert.equal(response.status, 200);
+    const envelope = await readMcpResponse(response);
+    assert.equal(envelope.result.isError, undefined);
+    const result = JSON.parse(envelope.result.content[0].text);
+    assert.ok(result.stream_keys.includes('unknown_dynamics'));
+    assert.ok(result.stream_keys.includes('empty_stream'));
+    assert.equal(result.streams.power_meter.raw_prefix.length, 8000);
+    assert.equal(result.streams.power_meter.length, 9000);
+    assert.equal(result.streams.power_meter.truncated, true);
+    assert.equal(result.streams.opaque_stream.raw_prefix, '[REDACTED]');
+    assert.equal(result.streams.app_token, undefined);
+    assert.equal(result.streams.email, undefined);
+    assert.equal(result.diagnostics.upstream_http_status.detail, 200);
+    assert.deepEqual(calls.map(c => c.path), ['/v2/registrations/tokens', '/v2/client/login', '/v1/sport/run/detail.json']);
+    for (const secret of [bearer, 'fixture-app-token', 'fixture-access', 'fixture@example.invalid', 'fixture-private-profile']) {
+      assert.ok(!JSON.stringify(envelope).includes(secret));
+    }
   } finally { await mf.dispose(); }
 });

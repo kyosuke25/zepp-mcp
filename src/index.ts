@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { createMcpHandler } from 'agents/mcp/server';
 import { z } from 'zod';
 import { DecodeError, decodeWorkout } from './decoder';
+import { debugRawStreams } from './debug-raw-streams';
 import { ZeppClient, ZeppError, type ZeppConfig } from './zepp-client';
 
 export interface Env extends ZeppConfig { MCP_AUTH_TOKEN?: string }
@@ -10,7 +11,7 @@ const id = z.string().regex(/^\d{1,12}$/);
 const sourceSchema = z.string().min(1).max(200);
 
 export function createServer(client: ZeppClient) {
-  const server = new McpServer({ name: 'zepp-mcp', version: '0.2.3' });
+  const server = new McpServer({ name: 'zepp-mcp', version: '0.2.4' });
   const safeResult = async (fn: () => Promise<unknown>) => {
     try { return { content: [{ type: 'text' as const, text: JSON.stringify(client.redact(await fn())) }] }; }
     catch (error) {
@@ -33,6 +34,12 @@ export function createServer(client: ZeppClient) {
     inputSchema: { track_id: id, source: sourceSchema }, annotations,
   }, args => safeResult(async () => ({ track_id: args.track_id,
     ...decodeWorkout(await client.workoutDetail(args.track_id, args.source), args.track_id) })));
+  server.registerTool('debug_raw_streams', {
+    description: 'Temporary diagnostic: fetch ONE workout detail and list all fields plus raw string-stream candidates (first 8000 characters and full length each). Includes personal workout/location data; do not publish or commit results. No decoding, pagination or retry.',
+    inputSchema: { track_id: id, source: sourceSchema }, annotations,
+  }, args => safeResult(async () => ({ track_id: args.track_id,
+    ...debugRawStreams(await client.workoutDetail(args.track_id, args.source)),
+    diagnostics: client.diagnostics() })));
   server.registerTool('run_poc', {
     description: 'Run the minimal proof once: authenticate, fetch ONE history page and ONE workout detail, decode samples including cadence. Stop on first error; never paginate or retry.',
     inputSchema: {}, annotations,
