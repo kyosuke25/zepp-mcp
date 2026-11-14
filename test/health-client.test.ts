@@ -10,8 +10,8 @@ function setup(reply: (url: URL, headers: Headers) => Response) {
     if (url.pathname.endsWith('/login')) { logins++; return Response.json({ token_info: { app_token: `fixture-token-${logins}`, user_id: logins === 1 ? 42 : 43 } }); }
     const headers = new Headers(init?.headers);
     assert.equal(url.hostname, 'api-mifit-de2.zepp.com');
-    assert.equal(headers.get('appplatform'), 'web');
-    assert.equal(headers.get('appname'), 'com.xiaomi.hm.health');
+    assert.equal(headers.get('appplatform'), url.pathname === '/huami.health.getUserInfo.json' ? 'android_phone' : 'web');
+    assert.equal(headers.get('appname'), url.pathname === '/huami.health.getUserInfo.json' ? 'com.huami.midong' : 'com.xiaomi.hm.health');
     assert.equal(headers.has('x-hm-ekv'), false);
     assert.equal(init?.method, 'GET');
     return reply(url, headers);
@@ -26,7 +26,7 @@ test('health tools use regional read-only endpoints and preserve every non-secre
   await client.healthEvents('all_day_stress', 0, 86400000);
   await client.healthEvents('exertion', 0, 86400000, 'algo_result', 'v2', 10);
   await client.sportStatistics('SPORT_LOAD', '2026-01-01', '2026-01-02');
-  await client.profile('properties');
+  await client.profile('profile');
   const device = await client.deviceSettings('7,8');
   assert.equal(calls.length, 10); // One login pair, eight single-page GETs.
   assert.equal(calls[2].pathname, '/v1/data/band_data.json');
@@ -38,7 +38,7 @@ test('health tools use regional read-only endpoints and preserve every non-secre
   assert.equal(calls[6].searchParams.get('subType'), 'algo_result');
   assert.equal(calls[6].searchParams.get('limit'), '10');
   assert.equal(calls[7].pathname, '/v2/watch/users/42/WatchSportStatistics/SPORT_LOAD');
-  assert.equal(calls[8].pathname, '/users/-/properties');
+  assert.equal(calls[8].pathname, '/huami.health.getUserInfo.json');
   assert.equal(calls[9].searchParams.get('deviceSources'), '7,8');
   assert.equal((daily.upstream as any).future, false);
   assert.equal(JSON.stringify(device).includes('fixture-private'), false);
@@ -72,6 +72,31 @@ test('known secrets are redacted inside base64 JSON values without leaking the o
   const summary = Buffer.from(JSON.stringify({ note: 'fixture-token-1', future: 7 })).toString('base64');
   const { client } = setup(() => Response.json({ data: [{ summary }] }));
   const result = client.redact(await client.dailyData('2026-01-01', '2026-01-01')) as any;
-  assert.deepEqual(JSON.parse(Buffer.from(result.upstream.data[0].summary, 'base64').toString()), { note: '[REDACTED]', future: 7 });
+  assert.deepEqual(JSON.parse(Buffer.from(result.encoded_upstream.data[0].summary, 'base64').toString()), { note: '[REDACTED]', future: 7 });
+  assert.deepEqual(result.upstream.data[0].summary, { note: '[REDACTED]', future: 7 });
   assert.equal(JSON.stringify(result).includes(summary), false);
+});
+
+test('profile uses documented mobile getUserInfo path with userid and no OAuth-host guessing', async () => {
+  const { client, calls } = setup((url, headers) => {
+    assert.equal(url.pathname, '/huami.health.getUserInfo.json');
+    assert.equal(url.searchParams.get('userid'), '42');
+    assert.equal(headers.get('apptoken'), 'fixture-token-1');
+    return Response.json({ code: 1, data: { nickname: 'Fixture Runner', height: 170, future: false, app_token: 'fixture-private' } });
+  });
+  const result = await client.profile();
+  assert.deepEqual(result.upstream, { code: 1, data: { nickname: 'Fixture Runner', height: 170, future: false } });
+  assert.equal(calls.length, 3);
+});
+test('unverified properties fails locally before login instead of repeating the known failing endpoint', async () => {
+  const { client, calls } = setup(() => { throw Error('Unexpected request'); });
+  await assert.rejects(client.profile('properties'), e => e instanceof ZeppError && e.reason === 'properties_endpoint_unverified');
+  assert.equal(calls.length, 0);
+});
+
+test('profile replacement reports upstream rejection without probing alternate endpoints', async () => {
+  const { client, calls } = setup(() => Response.json({ code: -1, message: 'fixture-private' }, { status: 404 }));
+  await assert.rejects(client.profile(), e => e instanceof ZeppError && e.stage === 'profile' && e.http_status === 404 && e.reason === 'upstream_rejected');
+  assert.equal(calls.length, 3);
+  assert.equal(client.diagnostics().upstream_http_status.profile, 404);
 });

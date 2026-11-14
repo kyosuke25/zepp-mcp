@@ -10,7 +10,7 @@ const id = z.string().regex(/^\d{1,12}$/);
 const sourceSchema = z.string().min(1).max(200);
 
 export function createServer(client: ZeppClient) {
-  const server = new McpServer({ name: 'zepp-mcp', version: '0.2.14' });
+  const server = new McpServer({ name: 'zepp-mcp', version: '0.2.15' });
   const safeResult = async (fn: () => Promise<unknown>) => {
     try { return { content: [{ type: 'text' as const, text: JSON.stringify(client.redact(await fn())) }] }; }
     catch (error) {
@@ -64,7 +64,7 @@ export function createServer(client: ZeppClient) {
     inputSchema: { metric: z.string().regex(/^[A-Z_]{1,64}$/), from_date: date, to_date: date, limit }, annotations,
   }, args => safeResult(() => client.sportStatistics(args.metric, args.from_date, args.to_date, args.limit)));
   server.registerTool('get_profile', {
-    description: 'Read the complete Zepp profile or properties, excluding authentication material. May contain personal information. One upstream GET.',
+    description: 'Read mobile user info via huami.health.getUserInfo.json with userid. Exclude authentication material. Properties is currently unavailable and fails locally without an upstream request. May contain personal information. One upstream GET.',
     inputSchema: { section: z.enum(['profile', 'properties']).default('profile') }, annotations,
   }, args => safeResult(() => client.profile(args.section)));
   server.registerTool('get_device_settings', {
@@ -89,7 +89,7 @@ export function createWorker(fetcher: typeof fetch = fetch) {
   return {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
       const path = new URL(request.url).pathname;
-      if (path === '/health' && request.method === 'GET') return Response.json({ ok: true, implementation_version: '0.2.14' });
+      if (path === '/health' && request.method === 'GET') return Response.json({ ok: true, implementation_version: '0.2.15' });
       if (path !== '/mcp') return new Response('Not found', { status: 404 });
       // Personal health data must not be publicly callable. Fail closed.
       if (!env.MCP_AUTH_TOKEN || env.MCP_AUTH_TOKEN.length < 32) return new Response('MCP access secret missing or too short', { status: 503 });

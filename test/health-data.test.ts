@@ -33,3 +33,33 @@ test('JSON-in-JSON and base64 JSON exclude nested credentials while retaining un
   assert.deepEqual(decoded.items[0], { extra: { spo2: 98 }, summary: { future: 7 }, training_sessions: 3 });
   assert.equal(JSON.stringify(decoded).includes('fixture-private'), false);
 });
+
+test('date-keyed band data produces structured summaries without assuming an array envelope', () => {
+  const summary = { stp: { ttl: 1234, future: 0 }, slp: { ss: 81, stage: [{ start: 1380, stop: 1500, mode: 5 }] }, tz: '32400' };
+  const r = decodeBandDays({ code: 1, data: { '2026-01-01': { summary: base64(summary), source: 7 } } });
+  assert.equal(r.days.length, 1);
+  assert.equal(r.days[0].path, '$.2026-01-01');
+  assert.deepEqual(r.days[0].summary, summary);
+  assert.equal(r.days[0].summary_decode, 'base64_json');
+  assert.deepEqual(r.warnings, []);
+});
+test('whitespace, unpadded URL-safe Base64, structured summaries and wrapper arrays are supported', () => {
+  const summary = { name: '合成シューズ', slp: { ss: 90 }, extra: null };
+  const raw = ' \n' + Buffer.from(JSON.stringify(summary)).toString('base64url') + '\t ';
+  const r = decodeBandDays({ data: { items: [{ summary: raw }, { summary }] } });
+  assert.equal(r.days.length, 2);
+  assert.deepEqual(r.days.map(d => d.summary), [summary, summary]);
+  assert.deepEqual(r.days.map(d => d.summary_decode), ['base64_json', 'structured_json']);
+});
+test('unrecognized summaries are explicit rather than presented as structured or silently discarded', () => {
+  const r = decodeBandDays({ data: [{ summary: 'opaque-unknown-format' }] });
+  assert.equal(r.days[0].summary, null);
+  assert.equal(r.days[0].summary_decode, 'unrecognized');
+  assert.equal((r.days[0].decoded as any).summary, 'opaque-unknown-format');
+  assert.equal(r.warnings.length, 1);
+});
+test('URL-safe Base64 authentication fields are removed even from the retained encoded form', () => {
+  const raw = Buffer.from(JSON.stringify({ slp: { ss: 80 }, token: 'fixture-private' })).toString('base64url');
+  const clean = publicUpstreamData({ summary: ' \n' + raw + '\t ' }) as any;
+  assert.deepEqual(JSON.parse(Buffer.from(clean.summary, 'base64').toString()), { slp: { ss: 80 } });
+});

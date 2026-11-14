@@ -74,7 +74,7 @@ export class ZeppClient {
       .every(k => c[k] === this.#config[k]);
   }
   diagnostics() {
-    return { implementation_version: '0.2.14', user_id: this.#userId ?? null,
+    return { implementation_version: '0.2.15', user_id: this.#userId ?? null,
       authentication_source: this.#authSource, upstream_status_scope: 'last_observed',
       retry_count: this.#retryCount, last_retry: this.#lastRetry ? { ...this.#lastRetry } : null,
       account_profile: { ...this.#profile },
@@ -285,8 +285,10 @@ export class ZeppClient {
     if (!['summary', 'detail'].includes(queryType)) throw new ZeppError('health', null, 'invalid_query_type');
     const payload = await this.#get('band_data', '/v1/data/band_data.json', { query_type: queryType,
       device_type: 'android_phone', from_date: fromDate, to_date: toDate }, { web: true });
-    const upstream = publicUpstreamData(payload) as JsonObject;
-    return { upstream, ...decodeBandDays(upstream), diagnostics: this.diagnostics() };
+    const encoded = publicUpstreamData(payload) as JsonObject;
+    // Primary response is structured; retain the encoded wire form explicitly.
+    return { upstream: decodedJsonFields(encoded), encoded_upstream: encoded,
+      ...decodeBandDays(encoded), diagnostics: this.diagnostics() };
   }
   async healthEvents(eventType: string, from: number, to: number, subType?: string, version: 'v1' | 'v2' = 'v1', limit = 200) {
     const validType = (v: string) => /^[A-Za-z0-9_.:-]{1,100}$/.test(v);
@@ -310,7 +312,10 @@ export class ZeppClient {
   }
   async profile(section: 'profile' | 'properties' = 'profile') {
     if (!['profile', 'properties'].includes(section)) throw new ZeppError('health', null, 'invalid_profile_section');
-    const payload = await this.#get('profile', `/users/-/${section}`, {}, { web: true, includeUserId: false });
+    if (section === 'properties') throw new ZeppError('profile', null, 'properties_endpoint_unverified');
+    // Published mobile clients use this path with userid and the apptoken header.
+    // /users/-/profile also exists on the separate OAuth Open API, not this route.
+    const payload = await this.#get('profile', '/huami.health.getUserInfo.json', {});
     return { upstream: publicUpstreamData(payload), diagnostics: this.diagnostics() };
   }
   async deviceSettings(deviceSources: string) {

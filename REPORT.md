@@ -1,3 +1,19 @@
+# 0.2.15 プロフィール・日次summaryの修正とMy Gear再調査
+
+get_profileのprofileは、複数の公開mobile実装で確認できたGET /huami.health.getUserInfo.json + userid + apptokenへ変更しました。認証で解決した地域を使い、別ホストへ推測で切り替えません。propertiesの正しい呼び出しは未特定のため、ツールを削除せず互換入力を保持し、properties_endpoint_unverifiedでネットワーク接続前に停止します。候補の根拠・旧404/400の利用者報告・無認証401と実アカウント成功の違いはRESEARCH.mdに記録しました。
+
+日次summaryはupstream側も構造化し、元のエンコードをencoded_upstreamへ分離しました。days[].summaryとsummary_decodeを追加。日付キー付きdata、ラッパー配列、既に構造化済みのsummary、空白・URL-safe・パディング省略Base64を扱います。未知の形式は明示的なnullと警告を返して原文を保持します。圧縮方式は推測しません。旧版は原文upstreamと展開済みdaysを分けていたため、報告された症状の原因が応答形状か原文側参照かは、実応答の提示まで未確定です。
+
+My Gearは公開検索・複数の公開実装・靴管理のローカル実装・APK入手経路まで調査しましたが、根拠のある上流パスは未特定です。APKの取得も期限切れ・403等で進められず、静的解析は未実施です。架空のlist_gearは追加しません。試した調査経路と結果、認証済みAPI候補の試行ができていない点をRESEARCH.mdに明記しました。
+
+全73テスト通過（通常69件・ローカルFIT回帰4件）、型チェック・ビルド成功。追加8件で応答コンテナ、Base64変種、失敗時の原文保持と診断、埋め込み秘密除外、mobileプロフィールのパス・userid・認証方式、propertiesのゼロ通信停止、上流拒否時の非探索を合成データで検証しました。workerd上でも主応答summaryがオブジェクトになることを確認しています。
+
+実データ検証は未完了です。この実行環境には認証済みZepp接続がなく、認証情報・シークレット値を取得せずに呼ぶ手段がありません。必要な非秘密の応答形状とMy Gear通信のパスを利用者へ照会しています。シークレット値の取得・表示・変更は行っていません。既存ランFIT回帰は通過しましたが、これを日次データの実検証と混同しません。
+
+公開対象34ファイルのスキャン検出0件、除外8件通過。実データは公開対象・配備バンドルに含まれません。フィクスチャ不在でも69件通過・4件スキップ。日英READMEのセットアップコードとツール名の一致を確認しました。既存環境設定を保持して0.2.15を再デプロイし、healthでHTTP 200・ok=true・implementation_version=0.2.15を確認しました。上流データの実アカウント検証の代わりにはしません。
+
+以下は以前の検証記録です。
+
 # 0.2.14 ステップ3：健康データの初期対応
 
 実装前に公開資料から確認できたエンドポイントと取得確度の一覧を利用者へ報告しました。API_MAP.mdに日英で保存しています。新規ツールはget_daily_data、get_health_events、get_sport_statistics、get_profile、get_device_settingsの5つです。Band data、v1/v2 events、WatchSportStatistics、profile/properties、device settingsを認証で解決した地域へGETします。既存4ツールは維持しています。

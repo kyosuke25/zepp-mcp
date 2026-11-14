@@ -12,8 +12,8 @@ Published protocol evidence is distinct from a live query against this account. 
 | `/users/{userId}/events` | Stress, SpO2, PAI and other events / ストレス・SpO2・PAI等 | `get_health_events` v1 | Published queries; device/account dependent / 公開クエリ、機種・アカウント依存 |
 | `/v2/users/me/events` | Exertion, PHN, recovery HR, BP, daily health / 負荷・PHN・回復心拍・血圧・日次情報 | `get_health_events` v2 | Published queries and payloads / 公開クエリ・応答 |
 | `/v2/watch/users/{userId}/WatchSportStatistics/{metric}` | SPORT_LOAD, VO2_MAX / 運動負荷・VO2max | `get_sport_statistics` | Published metric names; VO2max may be empty / 指標名の記載、空応答の可能性 |
-| `/users/-/profile` | Personal profile / 個人プロフィール | `get_profile` | Published path / パスの記載 |
-| `/users/-/properties` | Account properties / 設定 | `get_profile` | Published path / パスの記載 |
+| `/huami.health.getUserInfo.json` with `userid` | Mobile user info / mobileプロフィール | `get_profile` | Public mobile implementations; authenticated validation pending / 公開mobile実装、実アカウント検証待ち |
+| `/users/-/profile`, `/users/-/properties` (legacy) | Old profile/settings paths / 旧パス | Not called / 呼び出さない | Authenticated 404/400 reported; properties fails locally / 実アカウント404/400報告、propertiesはローカルで停止 |
 | `/device/settings/meta` | Settings metadata for deviceSources / 指定ソースのデバイス設定 | `get_device_settings` | Published query; not paired-device inventory / 公開クエリ、ペアリング一覧ではない |
 | My Gear list / 靴一覧 | IDs, names, mileage / ID・名前・距離 | Not available / 未提供 | Endpoint not identified / エンドポイント未特定 |
 
@@ -33,3 +33,5 @@ Examples / イベント指定例:
 根拠 / Evidence: [zepp-export API map](https://github.com/EvanCooke/zepp-export/blob/main/docs/api-reference.md), [SpO2 and PAI request implementation](https://github.com/bentasker/zepp_to_influxdb/blob/main/app/mifit_to_influxdb.py), [workout API landscape](https://github.com/frankherchet/zepp-mcp/blob/main/docs/research/02-zepp-api-landscape.md). Endpoint names and format facts were independently reimplemented; no source code was copied. パス・形式の事実だけを参考に再実装し、コードはコピーしていません。
 
 Unknown endpoints, device-only data, HRV-specific availability, raw activity binary semantics, new sport-specific stream semantics, and actual account coverage remain open. 未知エンドポイント、端末内限定データ、HRV専用データの取得可否、活動バイナリの意味、未知種目ストリームの意味、本アカウントでの取得範囲は継続課題です。
+
+0.2.15の再調査結果と候補ごとの根拠・応答は[調査記録 / reassessment](RESEARCH.md)を参照してください。

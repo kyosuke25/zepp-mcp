@@ -31,7 +31,7 @@ function runtime(withSecret = true, emptyHistory = false, detail: Record<string,
         data_hr: Buffer.from([60, 61, 255]).toString('base64') }] });
       if (url.pathname.endsWith('/events')) return MFResponse.json({ items: [{ data: JSON.stringify({ value: 7, token: 'fixture-private' }) }] });
       if (url.pathname.includes('/WatchSportStatistics/')) return MFResponse.json({ items: [{ future: 9 }] });
-      if (url.pathname === '/users/-/profile') return MFResponse.json({ nickname: 'Fixture Runner', token: 'fixture-private' });
+      if (url.pathname === '/huami.health.getUserInfo.json') return MFResponse.json({ nickname: 'Fixture Runner', token: 'fixture-private' });
       if (url.pathname === '/device/settings/meta') return MFResponse.json({ future: true });
       throw Error('Unexpected outbound request');
     },
@@ -67,7 +67,7 @@ test('workerd serves MCP initialization, tools and complete PoC with four mocked
     assert.equal(result.diagnostics.resolved_region, 'de2');
     assert.equal(result.diagnostics.user_id, '42');
     assert.equal(result.diagnostics.account_profile.display_name, 'Fixture Runner');
-    assert.equal(result.diagnostics.implementation_version, '0.2.14');
+    assert.equal(result.diagnostics.implementation_version, '0.2.15');
     assert.equal(result.diagnostics.retry_count, 0);
     assert.equal(result.diagnostics.last_retry, null);
     assert.equal(result.diagnostics.auth_country, 'JP');
@@ -90,7 +90,7 @@ test('MCP missing/wrong bearer fails closed and health never calls upstream', as
     try {
       const health = await mf.dispatchFetch('http://localhost/health');
       assert.equal(health.status, 200);
-      assert.deepEqual(await health.json(), { ok: true, implementation_version: '0.2.14' });
+      assert.deepEqual(await health.json(), { ok: true, implementation_version: '0.2.15' });
       const response = await mf.dispatchFetch('http://localhost/mcp', { method: 'POST' });
       assert.equal(response.status, withSecret ? 401 : 503);
       assert.equal(calls.length, 0);
@@ -129,7 +129,7 @@ test('get_workout returns power and posture in both streams and timeline, with t
     assert.equal(JSON.parse(envelope.result.content[0].text).metadata.gearId, 'fixture-gear-a');
     assert.deepEqual(JSON.parse(envelope.result.content[0].text).metadata.shoe, { id: 7, name: 'Fixture shoe' });
     assert.equal(JSON.parse(envelope.result.content[0].text).metadata.gearToken, undefined);
-    assert.equal(JSON.parse(envelope.result.content[0].text).diagnostics.implementation_version, '0.2.14');
+    assert.equal(JSON.parse(envelope.result.content[0].text).diagnostics.implementation_version, '0.2.15');
     const result = JSON.parse(envelope.result.content[0].text);
     assert.equal(result.streams.power_meter[1].power_w, 220);
     assert.equal(result.streams.runPosture[1].stance_time_ms, 250);
@@ -175,13 +175,28 @@ test('new health tools execute through authenticated MCP and preserve complete s
       const text = response.result.content[0].text;
       assert.equal(text.includes('fixture-private'), false);
       const result = JSON.parse(text);
-      assert.equal(result.diagnostics.implementation_version, '0.2.14');
+      assert.equal(result.diagnostics.implementation_version, '0.2.15');
       assert.ok(result.upstream);
       if (request.name === 'get_daily_data') {
         assert.equal(result.days[0].decoded.summary.newScore, 7);
+        assert.equal(result.days[0].summary.newScore, 7);
+        assert.equal(result.upstream.data[0].summary.newScore, 7);
+        assert.equal(typeof result.encoded_upstream.data[0].summary, 'string');
         assert.equal(result.days[0].heart_rate_minutes[2].heart_rate_bpm, null);
       }
     }
     assert.deepEqual(calls.map(c => c.method), ['POST', 'POST', 'GET', 'GET', 'GET', 'GET', 'GET']);
+  } finally { await mf.dispose(); }
+});
+
+test('unverified properties returns an explicit MCP error without logging in or probing', async () => {
+  const { mf, calls } = runtime();
+  try {
+    const envelope = await readMcpResponse(await rpc(mf, 'tools/call', { name: 'get_profile', arguments: { section: 'properties' } }));
+    assert.equal(envelope.result.isError, true);
+    const error = JSON.parse(envelope.result.content[0].text);
+    assert.equal(error.reason, 'properties_endpoint_unverified');
+    assert.equal(error.diagnostics.implementation_version, '0.2.15');
+    assert.equal(calls.length, 0);
   } finally { await mf.dispose(); }
 });
