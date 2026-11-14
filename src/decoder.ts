@@ -1,3 +1,4 @@
+import { gearMetadata } from './gear-metadata';
 /** Textual delta formats independently reimplemented from documented fields:
  * https://github.com/H3llK33p3r/zepp-fit-extractor (ZeppRestClient.kt field comments).
  * No source code copied. Sparse observations: no interpolation or forward fill.
@@ -133,7 +134,7 @@ export function decodeWorkout(detail: Record<string, unknown>, startTime?: strin
   }
   const unsupported = ['cadence', 'stroke_speed', 'air_pressure_altitude', 'correct_altitude'].filter(k => detail[k]);
   if (unsupported.length) warnings.push(`Unsupported streams: ${unsupported.join(', ')}`);
-  return { start_time_unix: start, streams, sample_alignment: sampleAlignment,
+  return { start_time_unix: start, metadata: gearMetadata(detail), streams, sample_alignment: sampleAlignment,
     sample_counts: Object.fromEntries(Object.entries(streams).map(([k, v]) => [k, v.length])),
     timeline: [...timeline.values()].sort((a, b) => a.offset_s - b.offset_s), warnings };
 }

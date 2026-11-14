@@ -72,7 +72,7 @@ export class ZeppClient {
       .every(k => c[k] === this.#config[k]);
   }
   diagnostics() {
-    return { implementation_version: '0.2.10', user_id: this.#userId ?? null,
+    return { implementation_version: '0.2.11', user_id: this.#userId ?? null,
       authentication_source: this.#authSource, upstream_status_scope: 'last_observed',
       retry_count: this.#retryCount, last_retry: this.#lastRetry ? { ...this.#lastRetry } : null,
       account_profile: { ...this.#profile },
@@ -272,9 +272,11 @@ export class ZeppClient {
     if (!Array.isArray(data.summary)) throw new ZeppError('history', 200, 'missing_summary_list');
     // Public output is an allowlist; no raw response or token-bearing metadata.
     const keys = ['trackid', 'source', 'type', 'end_time', 'distance', 'sport_time', 'calorie', 'avg_heart_rate'];
-    const items = data.summary.map(item => {
+    const items: JsonObject[] = data.summary.map(item => {
       const record = object(item);
-      return Object.fromEntries(keys.filter(k => typeof record[k] === 'string' || typeof record[k] === 'number').map(k => [k, record[k]]));
+      return { ...Object.fromEntries(keys.filter(k => typeof record[k] === 'string' || typeof record[k] === 'number').map(k => [k, record[k]])),
+        ...(record.gearId === null || typeof record.gearId === 'string' ||
+          (typeof record.gearId === 'number' && Number.isFinite(record.gearId)) ? { gearId: record.gearId } : {}) };
     });
     const next = data.next;
     return { items, count: items.length, pages_requested: 1, diagnostics: this.diagnostics(),

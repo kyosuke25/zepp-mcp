@@ -10,7 +10,7 @@ const id = z.string().regex(/^\d{1,12}$/);
 const sourceSchema = z.string().min(1).max(200);
 
 export function createServer(client: ZeppClient) {
-  const server = new McpServer({ name: 'zepp-mcp', version: '0.2.10' });
+  const server = new McpServer({ name: 'zepp-mcp', version: '0.2.11' });
   const safeResult = async (fn: () => Promise<unknown>) => {
     try { return { content: [{ type: 'text' as const, text: JSON.stringify(client.redact(await fn())) }] }; }
     catch (error) {
@@ -25,11 +25,11 @@ export function createServer(client: ZeppClient) {
     inputSchema: {}, annotations,
   }, () => safeResult(() => client.authenticate()));
   server.registerTool('list_workouts', {
-    description: 'Fetch exactly one history page. Pass next_track_id as cursor_track_id only when another page is explicitly needed.',
+    description: 'Fetch exactly one history page, including upstream gearId when present (no shoe-name lookup). Pass next_track_id as cursor_track_id only when another page is explicitly needed.',
     inputSchema: { cursor_track_id: id.optional() }, annotations,
   }, args => safeResult(() => client.listWorkouts(args.cursor_track_id)));
   server.registerTool('get_workout', {
-    description: 'Fetch one workout using track_id and source from history; decode GPS, HR, altitude, gait, cadence, power and running dynamics into sparse time series.',
+    description: 'Fetch one workout using track_id and source from history; decode GPS, HR, altitude, gait, cadence, power and running dynamics into sparse time series, with available gear/shoe attributes under metadata.',
     inputSchema: { track_id: id, source: sourceSchema }, annotations,
   }, args => safeResult(async () => {
     const detail = await client.workoutDetail(args.track_id, args.source);
@@ -66,7 +66,7 @@ export function createWorker(fetcher: typeof fetch = fetch) {
   return {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
       const path = new URL(request.url).pathname;
-      if (path === '/health' && request.method === 'GET') return Response.json({ ok: true, implementation_version: '0.2.10' });
+      if (path === '/health' && request.method === 'GET') return Response.json({ ok: true, implementation_version: '0.2.11' });
       if (path !== '/mcp') return new Response('Not found', { status: 404 });
       // Personal health data must not be publicly callable. Fail closed.
       if (!env.MCP_AUTH_TOKEN || env.MCP_AUTH_TOKEN.length < 32) return new Response('MCP access secret missing or too short', { status: 503 });

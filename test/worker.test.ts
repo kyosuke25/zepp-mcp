@@ -23,7 +23,7 @@ function runtime(withSecret = true, emptyHistory = false, detail: Record<string,
         assert.equal(url.searchParams.has('trackid'), false);
         assert.equal(url.searchParams.has('type'), false);
         return MFResponse.json({ code: 1,
-          data: { summary: emptyHistory ? [] : [{ trackid: String(fixture.trackid), source: 'watch' }], next: -1 } });
+          data: { summary: emptyHistory ? [] : [{ trackid: String(fixture.trackid), source: 'watch', gearId: 'fixture-gear-a' }], next: -1 } });
       }
       if (url.pathname === '/v1/sport/run/detail.json') return MFResponse.json({ code: 1, data: detail });
       throw Error('Unexpected outbound request');
@@ -56,10 +56,11 @@ test('workerd serves MCP initialization, tools and complete PoC with four mocked
     const result = JSON.parse(envelope.result.content[0].text);
     assert.equal(result.authenticated, true, JSON.stringify({ result, calls }));
     assert.equal(result.workout.timeline.length, 5);
+    assert.equal(result.history.items[0].gearId, 'fixture-gear-a');
     assert.equal(result.diagnostics.resolved_region, 'de2');
     assert.equal(result.diagnostics.user_id, '42');
     assert.equal(result.diagnostics.account_profile.display_name, 'Fixture Runner');
-    assert.equal(result.diagnostics.implementation_version, '0.2.10');
+    assert.equal(result.diagnostics.implementation_version, '0.2.11');
     assert.equal(result.diagnostics.retry_count, 0);
     assert.equal(result.diagnostics.last_retry, null);
     assert.equal(result.diagnostics.auth_country, 'JP');
@@ -82,7 +83,7 @@ test('MCP missing/wrong bearer fails closed and health never calls upstream', as
     try {
       const health = await mf.dispatchFetch('http://localhost/health');
       assert.equal(health.status, 200);
-      assert.deepEqual(await health.json(), { ok: true, implementation_version: '0.2.10' });
+      assert.deepEqual(await health.json(), { ok: true, implementation_version: '0.2.11' });
       const response = await mf.dispatchFetch('http://localhost/mcp', { method: 'POST' });
       assert.equal(response.status, withSecret ? 401 : 503);
       assert.equal(calls.length, 0);
@@ -109,6 +110,7 @@ test('empty-history run_poc still includes routing diagnostics and stops before 
 
 test('get_workout returns power and posture in both streams and timeline, with the temporary debug tool removed', async () => {
   const { mf } = runtime(true, false, { ...fixture,
+    gearId: 'fixture-gear-a', shoe: { id: 7, name: 'Fixture shoe' }, gearToken: 'fixture-private',
     power_meter: '1,210;1,220;1,230;',
     runPosture: '0,240,70,65;1,250,75,70;1,65535,65535,255;1,260,80,75;' });
   try {
@@ -117,7 +119,8 @@ test('get_workout returns power and posture in both streams and timeline, with t
     const envelope = await readMcpResponse(await rpc(mf, 'tools/call', {
       name: 'get_workout', arguments: { track_id: String(fixture.trackid), source: 'watch' } }));
     assert.equal(envelope.result.isError, undefined);
-    assert.equal(JSON.parse(envelope.result.content[0].text).diagnostics.implementation_version, '0.2.10');
+    assert.deepEqual(JSON.parse(envelope.result.content[0].text).metadata, { gearId: 'fixture-gear-a', shoe: { id: 7, name: 'Fixture shoe' } });
+    assert.equal(JSON.parse(envelope.result.content[0].text).diagnostics.implementation_version, '0.2.11');
     const result = JSON.parse(envelope.result.content[0].text);
     assert.equal(result.streams.power_meter[1].power_w, 220);
     assert.equal(result.streams.runPosture[1].stance_time_ms, 250);

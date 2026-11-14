@@ -373,3 +373,23 @@ test('cached authentication identifies cache use and labels upstream statuses as
   assert.equal(cached.diagnostics.last_retry, null);
   assert.equal(n, 2);
 });
+
+test('history preserves string/numeric/null gearId and omits absent or invalid gearId', async () => {
+  let n = 0;
+  const summary = [
+    { trackid: '1700000000', gearId: 'fixture-gear-a' },
+    { trackid: '1700000001', gearId: 7 },
+    { trackid: '1700000002', gearId: null },
+    { trackid: '1700000003' },
+    { trackid: '1700000004', gearId: { token: 'fixture-private' } },
+  ];
+  const client = new ZeppClient(config, mock(() => {
+    n++;
+    if (n === 1) return new Response(null, { status: 303, headers: { location: 'https://example.invalid/?access=fixture-access' } });
+    if (n === 2) return json({ token_info: { app_token: 'fixture-token', user_id: 42 } });
+    return json({ data: { summary, next: -1 } });
+  }));
+  const history = await client.listWorkouts();
+  assert.deepEqual(history.items, summary.map((item, i) => i === 4 ? { trackid: item.trackid } : item));
+  assert.equal(n, 3);
+});
