@@ -6,7 +6,7 @@ A personal MCP server that reads your workouts through Zepp's **unofficial cloud
 
 **This is not an official project of Zepp Health, Huami, or Amazfit and is not affiliated with those companies.** The unofficial API may change or become unavailable without notice. The software is provided under the MIT License, without warranties regarding operation or data accuracy.
 
-The current version is `0.2.13`. A public clone runs 53 tests using synthetic data and mocked network requests. Environments with the private local fixture also run four FIT regression tests. Authentication, retrieval of 39 workout records, and detailed decoding of the Fukuoka Marathon into per-second streams, including cadence, stride length, power, stance time, vertical oscillation, and vertical ratio, have been verified with a real account. This does not guarantee compatibility with every account, region, or device.
+The current version is `0.2.14`. A public clone runs 61 tests using synthetic data and mocked network requests. Environments with the private local fixture also run four FIT regression tests. Authentication, retrieval of 39 workout records, and detailed decoding of the Fukuoka Marathon into per-second streams, including cadence, stride length, power, stance time, vertical oscillation, and vertical ratio, have been verified with a real account. This does not guarantee compatibility with every account, region, or device.
 
 ## Prerequisites
 
@@ -145,6 +145,11 @@ An MCP `initialize` or `tools/list` POST with the Bearer header returning HTTP 2
 | `list_workouts` | Optional `cursor_track_id` | One history page preserving every upstream summary field except secrets; pass the returned `next_track_id` for the next page |
 | `get_workout` | `track_id`, `source` | Fetch one detail and decode power and running dynamics; return available shoe attributes under `metadata` |
 | `run_poc` | None | Authenticate → fetch one history page → fetch the first workout's details → decode |
+| `get_daily_data` | `from_date`, `to_date`, optional `query_type` | Complete sleep, HR, steps and activity response plus JSON and minute-HR decoding |
+| `get_health_events` | `event_type`, `from_ms`, `to_ms`, optional `sub_type`, `version`, `limit` | One page of stress, SpO2, PAI, load or other events |
+| `get_sport_statistics` | `metric`, `from_date`, `to_date`, optional `limit` | One page of sport-load, VO2max or other statistics |
+| `get_profile` | Optional `section` | Complete `profile` or `properties`, excluding secrets |
+| `get_device_settings` | `device_sources` | Settings metadata for known source IDs; not paired-device inventory |
 
 For the first live check, run `run_poc` **once**. If history is empty, detail retrieval is skipped. On failure, inspect the diagnostics instead of repeatedly calling with guessed settings. Zepp API calls other than authentication are GET requests only. There are no data writes or automatic pagination. Only HTTP 401/403 during history or detail retrieval invalidates the session and triggers reauthentication and at most one retry of the same data request. A second rejection stops the request; data-stage rejections are not cached as authentication failures for five minutes. Login-stage failures (auth_tokens/auth_login) are cached for five minutes and are not automatically retried.
 
@@ -168,6 +173,17 @@ For unknown strings, the count is the number of semicolon-delimited record slots
 ### All history fields
 
 Since 0.2.13, workout summaries have no field allowlist. New fields, sport-specific values, arrays, objects, nulls, and booleans are retained. Password, token, secret-key, authorization-header, cookie, and authentication-session keys are excluded recursively; known secret values are redacted before MCP output. Workout information such as `training_sessions` is retained, while authentication fields such as `session_id` are excluded. Personal information such as real IDs, display names, and emails is distinct from secret values under this policy. Use it only through your authenticated MCP clients and keep real responses out of public issues and repositories.
+
+### Data beyond workouts
+
+The [API coverage map](API_MAP.md) distinguishes documented paths from actual account availability. The new 0.2.14 tools are independently implemented from public protocol facts and tested with mocks; live retrieval on this account has not been verified. Making all Zepp data accessible is the policy, rather than a claim that every endpoint and semantic decoder is already complete.
+
+- `get_daily_data` accepts `YYYY-MM-DD` dates covering up to 31 inclusive days. `query_type` defaults to `detail`; `summary` is also supported. The complete upstream response is returned under `upstream`, and expanded JSON/Base64 JSON under `days[].decoded`. Heart-rate bytes become minute positions and bpm under `heart_rate_minutes`; 0, 254, and 255 become null. Activity binary data remains raw with its format marked unverified. Dates and timezones are not inferred; include the previous date for sleep crossing midnight.
+- `get_health_events` accepts Unix-millisecond bounds spanning up to 31 days. `limit` is 1–1000 (default 200), and `version` defaults to `v1`. Use `all_day_stress` for stress, `blood_oxygen` for SpO2, and `PaiHealthInfo` for PAI. For training load, use `version: v2`, `event_type: exertion`, and `sub_type: algo_result`. All response fields and parsed embedded JSON are retained. Other event names are accepted, without a guarantee that Zepp supports or returns them.
+- `get_sport_statistics` accepts up to 31 inclusive dates. Documented metrics are `SPORT_LOAD` and `VO2_MAX`; `limit` is 1–1000 (default 200). Unknown metric names may be rejected upstream.
+- `get_profile.section` defaults to `profile`, with `properties` also supported. For `get_device_settings.device_sources`, supply source IDs obtained from daily data or another known source.
+
+All tools are read-only with no automatic pagination. Health GETs use the host resolved during authentication and `appplatform: web`. HTTP 401/403 triggers at most one reauthentication and retry; the tools never probe another API or region automatically. Authentication material is excluded and redacted even inside embedded JSON/Base64 JSON. Empty responses do not necessarily mean that no measurements exist: device, date range, region, and upstream behavior affect availability.
 
 ## Local development
 

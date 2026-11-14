@@ -26,6 +26,13 @@ function runtime(withSecret = true, emptyHistory = false, detail: Record<string,
           data: { summary: emptyHistory ? [] : [{ trackid: String(fixture.trackid), source: 'watch', gearId: 'fixture-gear-a' }], next: -1 } });
       }
       if (url.pathname === '/v1/sport/run/detail.json') return MFResponse.json({ code: 1, data: detail });
+      if (url.pathname === '/v1/data/band_data.json') return MFResponse.json({ code: 1, data: [{
+        summary: Buffer.from(JSON.stringify({ slp: { ss: 80 }, stp: { ttl: 900 }, newScore: 7 })).toString('base64'),
+        data_hr: Buffer.from([60, 61, 255]).toString('base64') }] });
+      if (url.pathname.endsWith('/events')) return MFResponse.json({ items: [{ data: JSON.stringify({ value: 7, token: 'fixture-private' }) }] });
+      if (url.pathname.includes('/WatchSportStatistics/')) return MFResponse.json({ items: [{ future: 9 }] });
+      if (url.pathname === '/users/-/profile') return MFResponse.json({ nickname: 'Fixture Runner', token: 'fixture-private' });
+      if (url.pathname === '/device/settings/meta') return MFResponse.json({ future: true });
       throw Error('Unexpected outbound request');
     },
   }));
@@ -46,7 +53,7 @@ test('workerd serves MCP initialization, tools and complete PoC with four mocked
     assert.equal(initialized.result.serverInfo.name, 'zepp-mcp');
     const list = await rpc(mf, 'tools/list');
     const listed = await readMcpResponse(list) as any;
-    assert.equal(listed.result.tools.length, 4);
+    assert.equal(listed.result.tools.length, 9);
     assert.equal(calls.length, 0); // Discovery never contacts Zepp.
     const response = await rpc(mf, 'tools/call', { name: 'run_poc', arguments: {} });
     assert.equal(response.status, 200);
@@ -60,7 +67,7 @@ test('workerd serves MCP initialization, tools and complete PoC with four mocked
     assert.equal(result.diagnostics.resolved_region, 'de2');
     assert.equal(result.diagnostics.user_id, '42');
     assert.equal(result.diagnostics.account_profile.display_name, 'Fixture Runner');
-    assert.equal(result.diagnostics.implementation_version, '0.2.13');
+    assert.equal(result.diagnostics.implementation_version, '0.2.14');
     assert.equal(result.diagnostics.retry_count, 0);
     assert.equal(result.diagnostics.last_retry, null);
     assert.equal(result.diagnostics.auth_country, 'JP');
@@ -83,7 +90,7 @@ test('MCP missing/wrong bearer fails closed and health never calls upstream', as
     try {
       const health = await mf.dispatchFetch('http://localhost/health');
       assert.equal(health.status, 200);
-      assert.deepEqual(await health.json(), { ok: true, implementation_version: '0.2.13' });
+      assert.deepEqual(await health.json(), { ok: true, implementation_version: '0.2.14' });
       const response = await mf.dispatchFetch('http://localhost/mcp', { method: 'POST' });
       assert.equal(response.status, withSecret ? 401 : 503);
       assert.equal(calls.length, 0);
@@ -122,7 +129,7 @@ test('get_workout returns power and posture in both streams and timeline, with t
     assert.equal(JSON.parse(envelope.result.content[0].text).metadata.gearId, 'fixture-gear-a');
     assert.deepEqual(JSON.parse(envelope.result.content[0].text).metadata.shoe, { id: 7, name: 'Fixture shoe' });
     assert.equal(JSON.parse(envelope.result.content[0].text).metadata.gearToken, undefined);
-    assert.equal(JSON.parse(envelope.result.content[0].text).diagnostics.implementation_version, '0.2.13');
+    assert.equal(JSON.parse(envelope.result.content[0].text).diagnostics.implementation_version, '0.2.14');
     const result = JSON.parse(envelope.result.content[0].text);
     assert.equal(result.streams.power_meter[1].power_w, 220);
     assert.equal(result.streams.runPosture[1].stance_time_ms, 250);
@@ -149,5 +156,32 @@ test('removed debug_raw_streams cannot be called and makes no Zepp requests', as
       name: 'debug_raw_streams', arguments: { track_id: String(fixture.trackid), source: 'watch' } }));
     assert.ok(envelope.error || envelope.result?.isError);
     assert.equal(calls.length, 0);
+  } finally { await mf.dispose(); }
+});
+
+test('new health tools execute through authenticated MCP and preserve complete sanitized data', async () => {
+  const { mf, calls } = runtime();
+  try {
+    const requests = [
+      { name: 'get_daily_data', arguments: { from_date: '2026-01-01', to_date: '2026-01-01' } },
+      { name: 'get_health_events', arguments: { event_type: 'PaiHealthInfo', from_ms: 0, to_ms: 1000 } },
+      { name: 'get_sport_statistics', arguments: { metric: 'SPORT_LOAD', from_date: '2026-01-01', to_date: '2026-01-01' } },
+      { name: 'get_profile', arguments: {} },
+      { name: 'get_device_settings', arguments: { device_sources: '7' } },
+    ];
+    for (const request of requests) {
+      const response = await readMcpResponse(await rpc(mf, 'tools/call', request));
+      assert.equal(response.result.isError, undefined);
+      const text = response.result.content[0].text;
+      assert.equal(text.includes('fixture-private'), false);
+      const result = JSON.parse(text);
+      assert.equal(result.diagnostics.implementation_version, '0.2.14');
+      assert.ok(result.upstream);
+      if (request.name === 'get_daily_data') {
+        assert.equal(result.days[0].decoded.summary.newScore, 7);
+        assert.equal(result.days[0].heart_rate_minutes[2].heart_rate_bpm, null);
+      }
+    }
+    assert.deepEqual(calls.map(c => c.method), ['POST', 'POST', 'GET', 'GET', 'GET', 'GET', 'GET']);
   } finally { await mf.dispose(); }
 });

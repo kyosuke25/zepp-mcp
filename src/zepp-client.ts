@@ -1,3 +1,4 @@
+import { decodeBandDays, decodedJsonFields, parseEmbeddedJson } from './health-data';
 import { publicUpstreamData } from './upstream-data';
 import { accountProfile, emptyAccountProfile } from './account-profile';
 import { apiOrigin, countryCode, dataRoute, loginRouting, normalizeRegion } from './routing';
@@ -73,7 +74,7 @@ export class ZeppClient {
       .every(k => c[k] === this.#config[k]);
   }
   diagnostics() {
-    return { implementation_version: '0.2.13', user_id: this.#userId ?? null,
+    return { implementation_version: '0.2.14', user_id: this.#userId ?? null,
       authentication_source: this.#authSource, upstream_status_scope: 'last_observed',
       retry_count: this.#retryCount, last_retry: this.#lastRetry ? { ...this.#lastRetry } : null,
       account_profile: { ...this.#profile },
@@ -91,8 +92,8 @@ export class ZeppClient {
       routing_warnings: [...this.#routingWarnings],
       redirect_region_present: this.#redirectRegionPresent,
       login_region_present: this.#loginRegionPresent, login_route_map_present: this.#loginMapPresent,
-      upstream_http_status: { auth_tokens: this.#statuses.auth_tokens ?? null, auth_login: this.#statuses.auth_login ?? null,
-        history: this.#statuses.history ?? null, detail: this.#statuses.detail ?? null },
+      upstream_http_status: { ...this.#statuses, auth_tokens: this.#statuses.auth_tokens ?? null, auth_login: this.#statuses.auth_login ?? null,
+        history: this.#statuses.history ?? null, detail: this.#statuses.detail ?? null } as Record<string, number | null>,
       history_request: { cursor_track_id: this.#historyCursor, cursor_mode: this.#historyCursor === null ? 'omitted_first_page' : 'explicit',
         source_filter: null, type_filter: null, count_filter: null } };
   }
@@ -101,6 +102,14 @@ export class ZeppClient {
     if (typeof value === 'string') {
       for (const secret of [this.#config.ZEPP_EMAIL, this.#config.ZEPP_PASSWORD, this.#token, this.#access, ...this.#redactionSecrets]) {
         if (secret) value = (value as string).split(secret).join('[REDACTED]');
+      }
+      const parsed = parseEmbeddedJson(value as string);
+      if (parsed) {
+        const redacted = this.redact(parsed.value);
+        if (JSON.stringify(parsed.value) !== JSON.stringify(redacted)) {
+          const json = JSON.stringify(redacted);
+          return parsed.encoding === 'json' ? json : btoa(Array.from(new TextEncoder().encode(json), b => String.fromCharCode(b)).join(''));
+        }
       }
       return value;
     }
@@ -238,16 +247,18 @@ export class ZeppClient {
     this.#failure = undefined;
     this.#expires = Date.now() + 15 * 60000;
   }
-  async #get(stage: string, path: string, params: Record<string, string>): Promise<JsonObject> {
+  async #get(stage: string, path: string | ((userId: string) => string), params: Record<string, string>,
+    options: { web?: boolean; includeUserId?: boolean } = {}): Promise<JsonObject> {
     // Each data request gets at most two attempts, including its initial request.
     for (let attempt = 0; attempt < 2; attempt++) {
       await this.authenticate();
       const token = this.#token!;
       // Rebuild routing and userid after reauthentication; either may have changed.
-      const url = new URL(path, this.#dataOrigin!);
-      url.search = new URLSearchParams({ ...params, userid: this.#userId! }).toString();
+      const url = new URL(typeof path === 'function' ? path(this.#userId!) : path, this.#dataOrigin!);
+      url.search = new URLSearchParams({ ...params, ...(options.includeUserId === false ? {} : { userid: this.#userId! }) }).toString();
       const response = await this.#request(stage, url.toString(), { method: 'GET', headers: {
-        apptoken: token, appname: 'com.huami.midong', appplatform: 'android_phone', 'user-agent': userAgent } });
+        apptoken: token, appname: options.web ? 'com.xiaomi.hm.health' : 'com.huami.midong',
+        appplatform: options.web ? 'web' : 'android_phone', 'user-agent': userAgent } });
       if ([401, 403].includes(response.status)) {
         // A concurrent request may already have obtained a newer session.
         if (this.#token === token) { this.#token = undefined; this.#expires = 0; }
@@ -263,6 +274,50 @@ export class ZeppClient {
     throw new ZeppError(stage, null, 'retry_limit_exceeded');
   }
 
+  #dateRange(from: string, to: string) {
+    const valid = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && Number.isFinite(Date.parse(s)) && new Date(s).toISOString().slice(0, 10) === s;
+    if (!valid(from) || !valid(to) || from > to || Date.parse(to) - Date.parse(from) > 30 * 86400000) {
+      throw new ZeppError('health', null, 'invalid_date_range_max_31_days');
+    }
+  }
+  async dailyData(fromDate: string, toDate: string, queryType: 'summary' | 'detail' = 'detail') {
+    this.#dateRange(fromDate, toDate);
+    if (!['summary', 'detail'].includes(queryType)) throw new ZeppError('health', null, 'invalid_query_type');
+    const payload = await this.#get('band_data', '/v1/data/band_data.json', { query_type: queryType,
+      device_type: 'android_phone', from_date: fromDate, to_date: toDate }, { web: true });
+    const upstream = publicUpstreamData(payload) as JsonObject;
+    return { upstream, ...decodeBandDays(upstream), diagnostics: this.diagnostics() };
+  }
+  async healthEvents(eventType: string, from: number, to: number, subType?: string, version: 'v1' | 'v2' = 'v1', limit = 200) {
+    const validType = (v: string) => /^[A-Za-z0-9_.:-]{1,100}$/.test(v);
+    if (!validType(eventType) || (subType !== undefined && !validType(subType)) || !['v1', 'v2'].includes(version) ||
+      !Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < from || to > 8640000000000000 ||
+      to - from > 31 * 86400000 || !Number.isInteger(limit) || limit < 1 || limit > 1000) {
+      throw new ZeppError('health', null, 'invalid_event_query');
+    }
+    const path = version === 'v2' ? '/v2/users/me/events' : (id: string) => `/users/${id}/events`;
+    const payload = await this.#get('health_events', path, { eventType, from: String(from), to: String(to),
+      limit: String(limit), ...(subType === undefined ? {} : { subType }) }, { web: true, includeUserId: false });
+    const upstream = publicUpstreamData(payload);
+    return { upstream, decoded: decodedJsonFields(upstream), pages_requested: 1, diagnostics: this.diagnostics() };
+  }
+  async sportStatistics(metric: string, fromDate: string, toDate: string, limit = 200) {
+    this.#dateRange(fromDate, toDate);
+    if (!/^[A-Z_]{1,64}$/.test(metric) || !Number.isInteger(limit) || limit < 1 || limit > 1000) throw new ZeppError('health', null, 'invalid_statistics_query');
+    const payload = await this.#get('sport_statistics', id => `/v2/watch/users/${id}/WatchSportStatistics/${metric}`,
+      { startDay: fromDate, endDay: toDate, limit: String(limit), isReverse: 'true' }, { web: true, includeUserId: false });
+    return { upstream: publicUpstreamData(payload), diagnostics: this.diagnostics() };
+  }
+  async profile(section: 'profile' | 'properties' = 'profile') {
+    if (!['profile', 'properties'].includes(section)) throw new ZeppError('health', null, 'invalid_profile_section');
+    const payload = await this.#get('profile', `/users/-/${section}`, {}, { web: true, includeUserId: false });
+    return { upstream: publicUpstreamData(payload), diagnostics: this.diagnostics() };
+  }
+  async deviceSettings(deviceSources: string) {
+    if (!/^[A-Za-z0-9_,.-]{1,200}$/.test(deviceSources)) throw new ZeppError('health', null, 'invalid_device_sources');
+    const payload = await this.#get('device_settings', '/device/settings/meta', { deviceSources }, { web: true, includeUserId: false });
+    return { upstream: publicUpstreamData(payload), diagnostics: this.diagnostics() };
+  }
   async listWorkouts(cursor?: string) {
     if (cursor !== undefined && !/^\d{1,12}$/.test(cursor)) throw new ZeppError('history', null, 'invalid_cursor');
     this.#historyCursor = cursor ?? null;

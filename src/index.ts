@@ -10,7 +10,7 @@ const id = z.string().regex(/^\d{1,12}$/);
 const sourceSchema = z.string().min(1).max(200);
 
 export function createServer(client: ZeppClient) {
-  const server = new McpServer({ name: 'zepp-mcp', version: '0.2.13' });
+  const server = new McpServer({ name: 'zepp-mcp', version: '0.2.14' });
   const safeResult = async (fn: () => Promise<unknown>) => {
     try { return { content: [{ type: 'text' as const, text: JSON.stringify(client.redact(await fn())) }] }; }
     catch (error) {
@@ -48,6 +48,29 @@ export function createServer(client: ZeppClient) {
     const detail = await client.workoutDetail(trackid, selected.source);
     return { authenticated: true, history, diagnostics: client.diagnostics(), workout: { track_id: trackid, ...decodeWorkout(detail, trackid) } };
   }));
+  const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+  const limit = z.number().int().min(1).max(1000).default(200);
+  server.registerTool('get_daily_data', {
+    description: 'Read up to 31 inclusive dates of daily sleep, HR, steps and activity. Preserve all upstream fields; decode JSON/base64 JSON and minute HR. Binary activity stays raw. Query previous date for sleep crossing midnight; no inferred timezone.',
+    inputSchema: { from_date: date, to_date: date, query_type: z.enum(['summary', 'detail']).default('detail') }, annotations,
+  }, args => safeResult(() => client.dailyData(args.from_date, args.to_date, args.query_type)));
+  server.registerTool('get_health_events', {
+    description: 'Read ONE health-event page (up to 31 days, Unix milliseconds). v1 examples: all_day_stress, blood_oxygen, PaiHealthInfo. v2 examples: exertion/algo_result, phn/daily_analysis. Return every non-secret field plus parsed JSON. Availability depends on device/account; empty results are not proof of no measurements. Never probe other endpoints automatically.',
+    inputSchema: { event_type: z.string().regex(/^[A-Za-z0-9_.:-]{1,100}$/), sub_type: z.string().regex(/^[A-Za-z0-9_.:-]{1,100}$/).optional(),
+      from_ms: z.number().int().nonnegative(), to_ms: z.number().int().nonnegative(), version: z.enum(['v1', 'v2']).default('v1'), limit }, annotations,
+  }, args => safeResult(() => client.healthEvents(args.event_type, args.from_ms, args.to_ms, args.sub_type, args.version, args.limit)));
+  server.registerTool('get_sport_statistics', {
+    description: 'Read up to 31 inclusive dates of WatchSportStatistics (documented metrics: SPORT_LOAD, VO2_MAX). Return all upstream fields; other metric names may be rejected by Zepp. One page only.',
+    inputSchema: { metric: z.string().regex(/^[A-Z_]{1,64}$/), from_date: date, to_date: date, limit }, annotations,
+  }, args => safeResult(() => client.sportStatistics(args.metric, args.from_date, args.to_date, args.limit)));
+  server.registerTool('get_profile', {
+    description: 'Read the complete Zepp profile or properties, excluding authentication material. May contain personal information. One upstream GET.',
+    inputSchema: { section: z.enum(['profile', 'properties']).default('profile') }, annotations,
+  }, args => safeResult(() => client.profile(args.section)));
+  server.registerTool('get_device_settings', {
+    description: 'Read device settings metadata for known deviceSources (obtain source from daily data). This is not a paired-device inventory. One upstream GET; never changes settings.',
+    inputSchema: { device_sources: z.string().regex(/^[A-Za-z0-9_,.-]{1,200}$/) }, annotations,
+  }, args => safeResult(() => client.deviceSettings(args.device_sources)));
   return server;
 }
 async function bearerMatches(request: Request, expected: string): Promise<boolean> {
@@ -66,7 +89,7 @@ export function createWorker(fetcher: typeof fetch = fetch) {
   return {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
       const path = new URL(request.url).pathname;
-      if (path === '/health' && request.method === 'GET') return Response.json({ ok: true, implementation_version: '0.2.13' });
+      if (path === '/health' && request.method === 'GET') return Response.json({ ok: true, implementation_version: '0.2.14' });
       if (path !== '/mcp') return new Response('Not found', { status: 404 });
       // Personal health data must not be publicly callable. Fail closed.
       if (!env.MCP_AUTH_TOKEN || env.MCP_AUTH_TOKEN.length < 32) return new Response('MCP access secret missing or too short', { status: 503 });
