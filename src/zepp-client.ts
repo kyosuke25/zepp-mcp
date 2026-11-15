@@ -316,7 +316,7 @@ export class ZeppClient {
   async profile(section: 'profile' | 'properties' = 'profile', propertyNames?: string[], propertyMode?: 'BATCH' | 'RANGE') {
     if (!['profile', 'properties'].includes(section)) throw new ZeppError('health', null, 'invalid_profile_section');
     if (section === 'properties') {
-      // APK UserProperty reader: only BATCH accepts multiple comma-separated keys.
+      // Only BATCH accepts multiple comma-separated property keys.
       // Default is the app's observed watch-settings RANGE query, not "all properties".
       const names = propertyNames ?? ['huami.watch'];
       const mode = propertyMode ?? (propertyNames === undefined ? 'RANGE' : 'BATCH');

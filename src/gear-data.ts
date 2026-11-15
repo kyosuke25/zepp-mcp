@@ -1,7 +1,7 @@
 import { publicUpstreamData } from './upstream-data';
 
-/** Independently implemented from APK request/model field facts. No app code or
- * app payload fixtures are used. Keep the complete sanitized response as well.
+/** Preserve the complete sanitized response alongside normalized display values.
+ * Tests use synthetic records.
  */
 export function gearData(payload: Record<string, unknown>): {
   upstream: Record<string, unknown>; items: unknown[] | null;

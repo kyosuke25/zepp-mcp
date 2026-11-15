@@ -9,7 +9,7 @@ dist/
 output/
 test/fixtures/local/
 
-# Official-app packages and reverse-engineering artifacts stay outside Git.
+# Local binary and generated files are not published.
 *.apk
 *.xapk
 *.apkm

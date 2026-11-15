@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { gearData } from '../src/gear-data';
 import { ZeppClient, ZeppError } from '../src/zepp-client';
 
-// Entirely synthetic records; field names and units are protocol facts, not APK fixtures.
+// Entirely synthetic records using the protocol field names and units.
 const payload = { code: 1, data: { items: [
   { id: 7, gearId: 'fixture-gear-a', nickname: 'Fixture Swift', brandModel: 'Fixture Model', totalDistanceM: 1234, initialDistanceM: 100, future: { enabled: true, token: 'fixture-private' } },
   { id: 8, gearId: 'fixture-gear-b', nickname: '', brandModel: 'Fixture Model B', totalDistanceM: 0 },

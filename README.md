@@ -163,9 +163,9 @@ Bearer付きのMCP `initialize`または`tools/list`へのPOSTがHTTP 200で返�
 
 `get_workout.metadata`および`run_poc.workout.metadata`には、詳細dataのトップレベルにある`gearId`、`shoe_id`、`gear`、`shoe`等の靴属性が入ります。元のキー名とスカラー値を保持し、配列・オブジェクトも保持し、内部を含めて認証関連キーを除外します。靴情報が無い場合は靴キーを追加しません。時系列ストリームには追加しません。履歴のIDを詳細へ補完する処理もありません。
 
-0.2.16は公式APKの静的解析で特定した`GET /users/{userId}/gears`を使います。`list_gear`の引数なしは`status=1&limit=100`で有効ギア一覧、`gear_type: 0`は`gearType=0&limit=100`で靴、`gear_type: 1`は自転車です。種別指定時はstatusを送りません。既知の型は0/1で、その他の数値の上流対応は保証しません。1ページのみで、`upstream.data.next`は保持しますが未確認のカーソル引数は推測しません。
+0.2.16は`GET /users/{userId}/gears`を使います。`list_gear`の引数なしは`status=1&limit=100`で有効ギア一覧、`gear_type: 0`は`gearType=0&limit=100`で靴、`gear_type: 1`は自転車です。種別指定時はstatusを送りません。既知の型は0/1で、その他の数値の上流対応は保証しません。1ページのみで、`upstream.data.next`は保持しますが未確認のカーソル引数は推測しません。
 
-`items`と`upstream`に秘密情報を除く全属性を保持し、`gear_by_id[gearId]`に対応の配列を返します。名前は`nickname`を優先し、空なら`brandModel`、両方無ければnull。`total_distance_m`は上流の`totalDistanceM`、`initial_distance_m`は`initialDistanceM`です。足し算や単位の推測は行いません。同じgearIdが複数あっても上書きせず全対応を残します。履歴のgearIdでこの辞書を引くと、靴名・累計距離を照合できます。[解析の根拠](RESEARCH.md)にパス・モデル・ホスト解決の確認経路を記録しています。
+`items`と`upstream`に秘密情報を除く全属性を保持し、`gear_by_id[gearId]`に対応の配列を返します。名前は`nickname`を優先し、空なら`brandModel`、両方無ければnull。`total_distance_m`は上流の`totalDistanceM`、`initial_distance_m`は`initialDistanceM`です。足し算や単位の推測は行いません。同じgearIdが複数あっても上書きせず全対応を残します。履歴のgearIdでこの辞書を引くと、靴名・累計距離を照合できます。[プロトコル仕様](RESEARCH.md)にパス・応答形状・ホスト解決を記録しています。
 
 0.2.16の本番検証では靴7件の名前・累計距離を取得し、履歴39件すべてのgearIdを照合できました。実ID・名前・距離の値はリポジトリへ保存していません。
 
@@ -181,14 +181,14 @@ Bearer付きのMCP `initialize`または`tools/list`へのPOSTがHTTP 200で返�
 
 ### ワークアウト以外のデータ
 
-[API対応一覧](API_MAP.md)には、公開資料で確認できたパスと取得可否の確度をまとめています。健康系APIには実アカウントで未検証のものがあります。propertiesとギアは0.2.16でAPKの定義に基づいて実装しました。取得状況は[API対応一覧](API_MAP.md)と[REPORT](REPORT.md)で区別しています。Zeppにある全データを参照可能にする方針ですが、全エンドポイントの特定や意味的なデコードが完了したという意味ではありません。
+[API対応一覧](API_MAP.md)には、公開資料で確認できたパスと取得可否の確度をまとめています。健康系APIには実アカウントで未検証のものがあります。propertiesとギアは0.2.16で対応しました。取得状況は[API対応一覧](API_MAP.md)と[REPORT](REPORT.md)で区別しています。Zeppにある全データを参照可能にする方針ですが、全エンドポイントの特定や意味的なデコードが完了したという意味ではありません。
 
 - `get_daily_data`は`YYYY-MM-DD`で最大31日（両端含む）。`query_type`は`detail`が既定、`summary`も指定できます。構造化した全応答を`upstream`へ、エンコードされた元の応答を`encoded_upstream`へ返します。`days[].summary`と`days[].decoded.summary`が展開済みのsummary、`summary_decode`が形式・結果です。日付キー付きの応答、ラッパー配列、空白・パディング省略・URL-safe Base64も扱います。未知の形式は`summary: null`と警告を返し、原文を保持します。心拍バイトは`heart_rate_minutes`へ分位置とbpmを出し、0・254・255はnull。活動バイナリは意味未確認として原文保持します。日付・タイムゾーンは推測せず、日をまたぐ睡眠は前日も指定してください。
 - `get_health_events`の期間はUnixミリ秒で最大31日、`limit`は1〜1000（既定200）、`version`は`v1`が既定です。ストレスは`all_day_stress`、SpO2は`blood_oxygen`、PAIは`PaiHealthInfo`。負荷は`version: v2`、`event_type: exertion`、`sub_type: algo_result`。全上流応答とJSON文字列の展開を保持します。その他のイベント名も指定できますが、上流対応や取得成功を保証しません。
 - `get_sport_statistics`は最大31日（両端含む）、既知の`metric`は`SPORT_LOAD`・`VO2_MAX`です。`limit`は1〜1000（既定200）。未知の指標は上流が拒否する可能性があります。
 - `get_profile.section`は`profile`が既定で、`/huami.health.getUserInfo.json`へ`userid`付きでGETします。`section: properties`は数値IDの`/users/{userId}/properties`へ`propertyName`と`mode`を送ります。引数を追加しない場合は、アプリで確認した`propertyName=huami.watch&mode=RANGE`でwatch設定の範囲を取得します。全名前空間の無条件取得ではありません。`property_names`を明示した場合の既定は`BATCH`（指定キーのカンマ区切り照会）。`property_mode: RANGE`は名前空間・prefixを1つだけ指定します。BATCHのみ複数キーに対応し、上限100キーです。空のプロパティオブジェクトも有効な応答として保持します。`get_device_settings.device_sources`には日次応答の`source`等で分かったソースIDを指定します。
 
-0.2.16ではpropertiesのRANGE・BATCHとも本番HTTP 200を確認しました。既定の`huami.watch`範囲は空でしたが、APKにもある`huami.midong.user.version`範囲は2項目、そこから得た正確なキーのBATCHは1項目を返しました。RANGEのprefixをBATCHの完全一致キーとして使うと空になる場合があります。範囲照会の例:
+0.2.16ではpropertiesのRANGE・BATCHとも本番HTTP 200を確認しました。既定の`huami.watch`範囲は空でしたが、`huami.midong.user.version`範囲は2項目、そこから得た正確なキーのBATCHは1項目を返しました。RANGEのprefixをBATCHの完全一致キーとして使うと空になる場合があります。範囲照会の例:
 
 ```json
 {"section":"properties","property_names":["huami.midong.user.version"],"property_mode":"RANGE"}
