@@ -1,3 +1,68 @@
+# 0.2.16 公式APKの静的解析 / Official APK static analysis
+
+指定の主URLからXAPKを取得しました。230,469,622バイト、SHA-256 `376c8f400dfc3dab82e501f99af93c1014ab1326bc0c88a6329d678c82c72af9`で提示値と完全一致。manifestはpackage `com.huami.watch.hmwatchmanager`、version `10.10.5-play`、versionCode `151997`。ベースAPKは180,579,660バイト、classes.dex〜classes9.dexの9個です。予備URLは使用していません。
+
+The primary supplied URL downloaded successfully. Size and SHA-256 exactly match the supplied values. The manifest confirms the package/version above; the base APK contains nine DEX files. The fallback URL was not needed.
+
+解析はGit管理外で行いました。DEX文字列・コード参照・アノテーションを調べ、JADX 1.5.6で対象クラスを読んでいます。R8統合クラスで通常の逆コンパイルに失敗した箇所はsimpleモードとDEX参照で確認しました。APK・DEX・逆コンパイルソース・解析スクリプト・APK由来のフィクスチャをリポジトリへコピーしていません。以下はプロトコルの事実と確認経路のみです。実装とテストは独立したTypeScriptおよび合成データです。
+
+Analysis remained outside Git. DEX strings, references and annotations were inspected, with targeted JADX decompilation and simple mode where needed. No packages, extracted sources, analysis scripts or APK-derived fixtures were copied into the repository. The findings below are protocol facts, independently reimplemented and tested with synthetic data.
+
+## My Gear
+
+| Fact / 確認事項 | Finding / 結果 | Evidence / 確認経路 |
+| --- | --- | --- |
+| Host / ホスト | Resolved regional api-mifit origin; no fixed shard / 認証で解決したapi-mifit地域ホスト | `cof.baseUrl` → `kym.a`; `lym.a` and `AccountDelegateImp.j` initialize it from `glg0.i`, which applies `cnk.b` host mapping |
+| Method/path / メソッド・パス | GET `/users/{numericUserId}/gears` | `a1h0.f` constructs the path; `cof.c` and `iof.d` request it |
+| Per-type query / 種別照会 | `gearType=<type>&limit=100`, no status parameter | `cof.c` |
+| Enabled query / 有効ギア照会 | `status=1&limit=100`, no gearType parameter | `iof.d` (`loadAllEnableEquipments`) |
+| HTTP method proof / GET確認 | Async and sync helpers retain the GET builder default / 非同期・同期ともGET | `gqg0.J/M` → `mpg0.b/r` → default method 0 → `op10` defaults to GET |
+| Types / 種別 | 0 = SHOES, 1 = BIKE | `rof` enum |
+| Envelope / 応答形状 | `code`, `message`, `data.items`, `data.next` | `jof`, `jmf` models |
+| Join key / 対応キー | `gearId` | `xlf` model SerializedName |
+| Names / 名前 | `nickname`, `brandModel` | `xlf` model SerializedName |
+| Distance / 距離 | `totalDistanceM`, `initialDistanceM`, `targetDistanceM` | `xlf` model, double fields explicitly named in meters |
+
+他にid、userId、gearType、status、totalCount、lastUsedAt、firstUsedDate、associatedSportTypes、distanceAlertEnabled、createdAt、updatedAt等の属性を確認しました。これらも含め上流の全非秘密フィールドを保持します。名前のnickname優先・brandModelフォールバックは、このMCPの表示上の規則です。距離は上流値をそのまま使い、initialとtotalを合算しません。重複gearIdは配列で保持します。nextは公開しますが、アプリの確認箇所は100件の1ページだけなので、次ページのクエリ名を推測して実装しません。
+
+All non-secret attributes are retained, including the additional model fields noted above. Nickname-first display is an explicit MCP presentation rule. Initial and total distances are not added. Duplicate IDs retain arrays of associations. The next value is preserved, but no undocumented pagination parameter is invented.
+
+## User properties
+
+| Fact / 確認事項 | Finding / 結果 | Evidence / 確認経路 |
+| --- | --- | --- |
+| Host / ホスト | Resolved regional api-mifit origin / 解決済みapi-mifit地域ホスト | `ksk.c` → `vo8.J`; `vo8.D` initializes its host from `glg0.i` |
+| Method/path / メソッド・パス | GET `/users/{numericUserId}/properties` | `vo8.J`, `mfs.c0`, generic `fa4.d` reader |
+| Query / クエリ | `propertyName` and `mode` | `fa4.d` always appends both |
+| Exact keys / キー指定 | `mode=BATCH`, comma-separated propertyName | `fa4.d`; only BATCH accepts more than one key |
+| Scope / 範囲指定 | `mode=RANGE`, exactly one name/prefix | `ksk.c` (`ByScope`) and `fa4.d` |
+| Observed app scope / 実際のアプリ照会 | `propertyName=huami.watch&mode=RANGE` | `ksk.c` |
+| Other app example / 別の照会 | `propertyName=huami.midong.user.version&mode=RANGE` | `mfs.c0` |
+
+0.2.16の既定は確認できたhuami.watchの範囲照会です。全アカウント設定の無条件取得を意味しません。property_namesを明示した場合の既定はBATCHで、RANGEも明示指定できます。他の名前空間・キーを許可リストで制限しません。上流400の原因を実データで断定したものではなく、APKに存在する正しいパス・クエリの組合せへ修正しています。空のJSONオブジェクトも正常な結果として保持します。
+
+The default is the observed huami.watch scope query, not an unconditional fetch of every account setting. Explicit property_names defaults to BATCH; RANGE may also be selected. Namespaces and keys have no allowlist. This fixes the request to match APK evidence without claiming to have isolated the earlier authenticated 400 cause. Empty JSON objects remain valid results.
+
+## 0.2.16 本番検証 / Production verification
+
+安全な入力経路で渡されたMCP用トークンを本番接続に使用しました。トークン値は出力・公開ファイルへ記録していません。WorkerのZepp認証用シークレットは取得・変更していません。
+
+- 靴指定と有効ギア一覧は上流HTTP 200、各7件。7件とも名前と数値の累計距離が返り、履歴1ページ39件のgearIdもすべて照合できました。
+- 既定huami.watchのRANGEはHTTP 200で空オブジェクト。
+- APKの別の照会例huami.midong.user.versionのRANGEはHTTP 200で2項目。
+- 同prefixをBATCH完全一致キーとして渡した場合はHTTP 200で空。RANGEで得た実際の返却キーを使うとBATCHでHTTP 200・1項目を取得しました。prefixと完全一致キーは同じ意味ではありません。
+- 全実応答と対応表はGit除外済みのローカル出力にのみ保存し、公開ファイルには集計のみ記録しています。実データ・APK由来フィクスチャはコミットしません。
+
+Production checks returned HTTP 200 for both gear query shapes, with seven named shoes and numeric cumulative distances; all 39 history gear IDs matched. Default watch-scope RANGE was empty. The APK-observed version-scope RANGE returned two fields. BATCH with the prefix itself was empty, while BATCH with an exact returned key retrieved one field. Raw responses and associations remain only in ignored local output; public files contain aggregates, never credential values or real records.
+
+APIの書き込み系定義は実装・呼び出ししていません。Workerシークレットの取得・変更も行いません。最終確認はデプロイ後の認証済みMCP呼び出しと区別して記録します。
+
+No write APIs were implemented or invoked, and Worker secrets were not retrieved or changed. Authenticated post-deployment results are recorded separately from these static findings.
+
+---
+
+以下は0.2.15までの調査履歴です。Previously recorded investigation follows.
+
 # 0.2.15 API見直し / API reassessment
 
 ## プロフィール / Profile

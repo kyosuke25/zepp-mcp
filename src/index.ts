@@ -10,7 +10,7 @@ const id = z.string().regex(/^\d{1,12}$/);
 const sourceSchema = z.string().min(1).max(200);
 
 export function createServer(client: ZeppClient) {
-  const server = new McpServer({ name: 'zepp-mcp', version: '0.2.15' });
+  const server = new McpServer({ name: 'zepp-mcp', version: '0.2.16' });
   const safeResult = async (fn: () => Promise<unknown>) => {
     try { return { content: [{ type: 'text' as const, text: JSON.stringify(client.redact(await fn())) }] }; }
     catch (error) {
@@ -64,9 +64,15 @@ export function createServer(client: ZeppClient) {
     inputSchema: { metric: z.string().regex(/^[A-Z_]{1,64}$/), from_date: date, to_date: date, limit }, annotations,
   }, args => safeResult(() => client.sportStatistics(args.metric, args.from_date, args.to_date, args.limit)));
   server.registerTool('get_profile', {
-    description: 'Read mobile user info via huami.health.getUserInfo.json with userid. Exclude authentication material. Properties is currently unavailable and fails locally without an upstream request. May contain personal information. One upstream GET.',
-    inputSchema: { section: z.enum(['profile', 'properties']).default('profile') }, annotations,
-  }, args => safeResult(() => client.profile(args.section)));
+    description: 'Read mobile user info or user properties. Properties uses numeric user ID, propertyName and mode. Default properties query is RANGE huami.watch (watch settings), not all namespaces. Pass property_names for exact BATCH keys, or property_mode RANGE with one prefix. One GET; complete sanitized response.',
+    inputSchema: { section: z.enum(['profile', 'properties']).default('profile'),
+      property_names: z.array(z.string().regex(/^[A-Za-z0-9_.:-]{1,200}$/)).min(1).max(100).optional(),
+      property_mode: z.enum(['BATCH', 'RANGE']).optional() }, annotations,
+  }, args => safeResult(() => client.profile(args.section, args.property_names, args.property_mode)));
+  server.registerTool('list_gear', {
+    description: 'Read ONE My Gear page, limit 100. No arguments uses app enabled query status=1 across types. gear_type uses the app per-type query without a status parameter (0=shoes, 1=bike). Return all sanitized item fields and gear_by_id arrays mapping history gearId to nickname/brandModel and totalDistanceM in meters. Never infer pagination or sum initial and total distances.',
+    inputSchema: { gear_type: z.number().int().min(0).max(2147483647).optional() }, annotations,
+  }, args => safeResult(() => client.listGear(args.gear_type)));
   server.registerTool('get_device_settings', {
     description: 'Read device settings metadata for known deviceSources (obtain source from daily data). This is not a paired-device inventory. One upstream GET; never changes settings.',
     inputSchema: { device_sources: z.string().regex(/^[A-Za-z0-9_,.-]{1,200}$/) }, annotations,
@@ -89,7 +95,7 @@ export function createWorker(fetcher: typeof fetch = fetch) {
   return {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
       const path = new URL(request.url).pathname;
-      if (path === '/health' && request.method === 'GET') return Response.json({ ok: true, implementation_version: '0.2.15' });
+      if (path === '/health' && request.method === 'GET') return Response.json({ ok: true, implementation_version: '0.2.16' });
       if (path !== '/mcp') return new Response('Not found', { status: 404 });
       // Personal health data must not be publicly callable. Fail closed.
       if (!env.MCP_AUTH_TOKEN || env.MCP_AUTH_TOKEN.length < 32) return new Response('MCP access secret missing or too short', { status: 503 });

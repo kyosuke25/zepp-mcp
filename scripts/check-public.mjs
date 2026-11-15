@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 const files = [...new Set(execFileSync('git', ['ls-files', '-co', '--exclude-standard', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean))];
 const rules = [
   ['literal-user-secret', /(?:ZEPP_EMAIL|ZEPP_PASSWORD|MCP_AUTH_TOKEN)["']?\s*[:=]\s*["'](?!fixture(?:-|@example\.invalid)|\$\{|["'])[^\r\n"']+/],
+  ['decompiled-app-code', /\/\* JADX (?:INFO|WARN):/],
   ['private-key', /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/],
   ['cloudflare-account-id', /account_id\s*["']?\s*[:=]\s*["'][a-f0-9]{32}["']/i],
   ['deployed-hostname', /\b[a-z0-9-]+\.[a-z0-9-]+\.workers\.dev\b/i],
@@ -15,11 +16,12 @@ const rules = [
 ];
 const findings = [];
 for (const file of files) {
+  if (/\.(?:apk|xapk|apkm|dex|dex\.strings|jobf)$/.test(file)) findings.push([file, 'app-analysis-artifact']);
   if (/(^|\/)(?:\.env(?:\..*)?|\.dev\.vars(?:\..*)?)$/.test(file) && file !== '.dev.vars.example') findings.push([file, 'secret-file']);
   const content = readFileSync(file, 'utf8');
   for (const [name, rule] of rules) if (rule.test(content)) findings.push([file, name]);
 }
-const candidates = ['.env', '.env.production', '.dev.vars', '.dev.vars.local', '.wrangler/state/test', 'output/private.json', 'dist/index.js', 'test/fixtures/local/private.json'];
+const candidates = ['.env', '.env.production', '.dev.vars', '.dev.vars.local', '.wrangler/state/test', 'output/private.json', 'dist/index.js', 'test/fixtures/local/private.json', 'private.apk', 'private.xapk', 'private.apkm', 'classes.dex', 'classes.dex.strings', 'private.jobf'];
 const ignored = execFileSync('git', ['check-ignore', '--stdin'], { input: candidates.join('\n') + '\n', encoding: 'utf8' }).trim().split('\n');
 for (const file of candidates) if (!ignored.includes(file)) findings.push([file, 'not-ignored']);
 console.log(JSON.stringify({ scanned_files: files.length, ignore_checks: candidates.length, findings }));

@@ -1,3 +1,4 @@
+import { gearData } from './gear-data';
 import { decodeBandDays, decodedJsonFields, parseEmbeddedJson } from './health-data';
 import { publicUpstreamData } from './upstream-data';
 import { accountProfile, emptyAccountProfile } from './account-profile';
@@ -74,7 +75,7 @@ export class ZeppClient {
       .every(k => c[k] === this.#config[k]);
   }
   diagnostics() {
-    return { implementation_version: '0.2.15', user_id: this.#userId ?? null,
+    return { implementation_version: '0.2.16', user_id: this.#userId ?? null,
       authentication_source: this.#authSource, upstream_status_scope: 'last_observed',
       retry_count: this.#retryCount, last_retry: this.#lastRetry ? { ...this.#lastRetry } : null,
       account_profile: { ...this.#profile },
@@ -126,7 +127,7 @@ export class ZeppClient {
       return response;
     } catch { throw new ZeppError(stage, null, 'network_or_timeout'); }
   }
-  async #json(stage: string, response: Response): Promise<JsonObject> {
+  async #json(stage: string, response: Response, allowEmptyObject = false): Promise<JsonObject> {
     let raw: unknown;
     try { raw = await response.json(); }
     catch { throw new ZeppError(stage, response.status, 'non_json_response'); }
@@ -138,7 +139,9 @@ export class ZeppClient {
     if (!response.ok || data.error_code !== undefined || (data.code !== undefined && ![0, 1, 200, '0', '1', '200'].includes(data.code as number))) {
       throw new ZeppError(stage, response.status, 'upstream_rejected', apiCode);
     }
-    if (Object.keys(data).length === 0) throw new ZeppError(stage, response.status, 'invalid_json_shape');
+    if ((!allowEmptyObject || raw === null || typeof raw !== 'object' || Array.isArray(raw)) && Object.keys(data).length === 0) {
+      throw new ZeppError(stage, response.status, 'invalid_json_shape');
+    }
     return data;
   }
   async authenticate() {
@@ -248,7 +251,7 @@ export class ZeppClient {
     this.#expires = Date.now() + 15 * 60000;
   }
   async #get(stage: string, path: string | ((userId: string) => string), params: Record<string, string>,
-    options: { web?: boolean; includeUserId?: boolean } = {}): Promise<JsonObject> {
+    options: { web?: boolean; includeUserId?: boolean; allowEmptyObject?: boolean } = {}): Promise<JsonObject> {
     // Each data request gets at most two attempts, including its initial request.
     for (let attempt = 0; attempt < 2; attempt++) {
       await this.authenticate();
@@ -269,7 +272,7 @@ export class ZeppClient {
           continue;
         }
       }
-      return this.#json(stage, response);
+      return this.#json(stage, response, options.allowEmptyObject);
     }
     throw new ZeppError(stage, null, 'retry_limit_exceeded');
   }
@@ -310,13 +313,38 @@ export class ZeppClient {
       { startDay: fromDate, endDay: toDate, limit: String(limit), isReverse: 'true' }, { web: true, includeUserId: false });
     return { upstream: publicUpstreamData(payload), diagnostics: this.diagnostics() };
   }
-  async profile(section: 'profile' | 'properties' = 'profile') {
+  async profile(section: 'profile' | 'properties' = 'profile', propertyNames?: string[], propertyMode?: 'BATCH' | 'RANGE') {
     if (!['profile', 'properties'].includes(section)) throw new ZeppError('health', null, 'invalid_profile_section');
-    if (section === 'properties') throw new ZeppError('profile', null, 'properties_endpoint_unverified');
-    // Published mobile clients use this path with userid and the apptoken header.
-    // /users/-/profile also exists on the separate OAuth Open API, not this route.
+    if (section === 'properties') {
+      // APK UserProperty reader: only BATCH accepts multiple comma-separated keys.
+      // Default is the app's observed watch-settings RANGE query, not "all properties".
+      const names = propertyNames ?? ['huami.watch'];
+      const mode = propertyMode ?? (propertyNames === undefined ? 'RANGE' : 'BATCH');
+      if (!Array.isArray(names) || names.length < 1 || names.length > 100 ||
+        names.some(name => typeof name !== 'string' || !/^[A-Za-z0-9_.:-]{1,200}$/.test(name)) ||
+        !['BATCH', 'RANGE'].includes(mode) || (mode === 'RANGE' && names.length !== 1)) {
+        throw new ZeppError('profile', null, 'invalid_properties_query');
+      }
+      const payload = await this.#get('properties', id => `/users/${id}/properties`,
+        { propertyName: names.join(','), mode }, { includeUserId: false, allowEmptyObject: true });
+      const upstream = publicUpstreamData(payload);
+      return { section, property_names: names, property_mode: mode, upstream,
+        decoded: decodedJsonFields(upstream), diagnostics: this.diagnostics() };
+    }
+    if (propertyNames !== undefined || propertyMode !== undefined) throw new ZeppError('profile', null, 'property_options_require_properties');
     const payload = await this.#get('profile', '/huami.health.getUserInfo.json', {});
     return { upstream: publicUpstreamData(payload), diagnostics: this.diagnostics() };
+  }
+  async listGear(gearType?: number) {
+    if (gearType !== undefined && (!Number.isInteger(gearType) || gearType < 0 || gearType > 2147483647)) {
+      throw new ZeppError('gear', null, 'invalid_gear_type');
+    }
+    // Exactly the two app query shapes; no guessed pagination or write endpoints.
+    const params: Record<string, string> = gearType === undefined ? { status: '1', limit: '100' }
+      : { gearType: String(gearType), limit: '100' };
+    const payload = await this.#get('gear', id => `/users/${id}/gears`, params, { includeUserId: false });
+    return { ...gearData(payload), pages_requested: 1, request: { scope: gearType === undefined ? 'enabled' : 'gear_type', ...params },
+      diagnostics: this.diagnostics() };
   }
   async deviceSettings(deviceSources: string) {
     if (!/^[A-Za-z0-9_,.-]{1,200}$/.test(deviceSources)) throw new ZeppError('health', null, 'invalid_device_sources');

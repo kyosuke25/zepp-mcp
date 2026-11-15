@@ -8,3 +8,11 @@ dist/
 .env.*
 output/
 test/fixtures/local/
+
+# Official-app packages and reverse-engineering artifacts stay outside Git.
+*.apk
+*.xapk
+*.apkm
+*.dex
+*.dex.strings
+*.jobf

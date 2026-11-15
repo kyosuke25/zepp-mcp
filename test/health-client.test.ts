@@ -10,8 +10,8 @@ function setup(reply: (url: URL, headers: Headers) => Response) {
     if (url.pathname.endsWith('/login')) { logins++; return Response.json({ token_info: { app_token: `fixture-token-${logins}`, user_id: logins === 1 ? 42 : 43 } }); }
     const headers = new Headers(init?.headers);
     assert.equal(url.hostname, 'api-mifit-de2.zepp.com');
-    assert.equal(headers.get('appplatform'), url.pathname === '/huami.health.getUserInfo.json' ? 'android_phone' : 'web');
-    assert.equal(headers.get('appname'), url.pathname === '/huami.health.getUserInfo.json' ? 'com.huami.midong' : 'com.xiaomi.hm.health');
+    assert.equal(headers.get('appplatform'), (/\/(?:properties|gears)$/.test(url.pathname) || url.pathname === '/huami.health.getUserInfo.json') ? 'android_phone' : 'web');
+    assert.equal(headers.get('appname'), (/\/(?:properties|gears)$/.test(url.pathname) || url.pathname === '/huami.health.getUserInfo.json') ? 'com.huami.midong' : 'com.xiaomi.hm.health');
     assert.equal(headers.has('x-hm-ekv'), false);
     assert.equal(init?.method, 'GET');
     return reply(url, headers);
@@ -88,10 +88,15 @@ test('profile uses documented mobile getUserInfo path with userid and no OAuth-h
   assert.deepEqual(result.upstream, { code: 1, data: { nickname: 'Fixture Runner', height: 170, future: false } });
   assert.equal(calls.length, 3);
 });
-test('unverified properties fails locally before login instead of repeating the known failing endpoint', async () => {
-  const { client, calls } = setup(() => { throw Error('Unexpected request'); });
-  await assert.rejects(client.profile('properties'), e => e instanceof ZeppError && e.reason === 'properties_endpoint_unverified');
-  assert.equal(calls.length, 0);
+test('properties uses numeric account path and BATCH propertyName without extra userid query', async () => {
+  const { client, calls } = setup(url => {
+    assert.equal(url.pathname, '/users/42/properties');
+    assert.deepEqual(Object.fromEntries(url.searchParams), { propertyName: 'fixture.setting,fixture.goal', mode: 'BATCH' });
+    return Response.json({ 'fixture.setting': JSON.stringify({ enabled: true, app_token: 'fixture-private' }), 'fixture.goal': '7' });
+  });
+  const result = await client.profile('properties', ['fixture.setting', 'fixture.goal']);
+  assert.deepEqual(result.decoded, { 'fixture.setting': { enabled: true }, 'fixture.goal': '7' });
+  assert.equal(calls.length, 3);
 });
 
 test('profile replacement reports upstream rejection without probing alternate endpoints', async () => {
@@ -99,4 +104,41 @@ test('profile replacement reports upstream rejection without probing alternate e
   await assert.rejects(client.profile(), e => e instanceof ZeppError && e.stage === 'profile' && e.http_status === 404 && e.reason === 'upstream_rejected');
   assert.equal(calls.length, 3);
   assert.equal(client.diagnostics().upstream_http_status.profile, 404);
+});
+
+test('default properties mirrors the observed app RANGE scope and accepts an empty property object', async () => {
+  const { client, calls } = setup(url => {
+    assert.equal(url.pathname, '/users/42/properties');
+    assert.equal(url.searchParams.get('propertyName'), 'huami.watch');
+    assert.equal(url.searchParams.get('mode'), 'RANGE');
+    return Response.json({});
+  });
+  const result = await client.profile('properties');
+  assert.deepEqual(result.upstream, {});
+  assert.deepEqual(result.decoded, {});
+  assert.equal(result.property_mode, 'RANGE');
+  assert.equal(calls.length, 3);
+});
+test('properties RANGE selectors and invalid queries are checked before authentication', async () => {
+  const { client, calls } = setup(() => { throw Error('Unexpected request'); });
+  for (const fn of [() => client.profile('properties', []),
+    () => client.profile('properties', ['fixture.a', 'fixture.b'], 'RANGE'),
+    () => client.profile('properties', ['fixture&mode=other']),
+    () => client.profile('profile', ['fixture.a'])]) await assert.rejects(fn(), ZeppError);
+  assert.equal(calls.length, 0);
+});
+test('properties rejects non-object responses and preserves retry behavior with the new account path', async () => {
+  let gets = 0;
+  const { client, calls, logins } = setup(url => {
+    if (++gets === 1) return Response.json({ code: -1 }, { status: 401 });
+    assert.equal(url.pathname, '/users/43/properties');
+    assert.equal(url.searchParams.get('mode'), 'RANGE');
+    assert.equal(url.searchParams.get('propertyName'), 'fixture.watch');
+    return Response.json({ 'fixture.watch.setting': 7 });
+  });
+  const result = await client.profile('properties', ['fixture.watch'], 'RANGE');
+  assert.deepEqual(result.upstream, { 'fixture.watch.setting': 7 });
+  assert.deepEqual({ gets, logins: logins(), calls: calls.length }, { gets: 2, logins: 2, calls: 6 });
+  const invalid = setup(() => Response.json([]));
+  await assert.rejects(invalid.client.profile('properties'), e => e instanceof ZeppError && e.reason === 'invalid_json_shape');
 });

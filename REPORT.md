@@ -1,3 +1,25 @@
+# 0.2.16 My Gear・propertiesのAPK解析と実装
+
+指定XAPKの主URLでダウンロード成功。230,469,622バイト、SHA-256 376c8f400dfc3dab82e501f99af93c1014ab1326bc0c88a6329d678c82c72af9が一致しました。ベースAPKは180,579,660バイト、manifestのversionCodeは151997、versionは10.10.5-play。JADXとDEX参照で定義・呼び出し元・ホスト設定・GET生成・応答モデルまで追跡しました。RESEARCH.mdに確認経路を記録しています。APKおよび解析物はGit管理外に隔離し、コード・APK由来フィクスチャはコピーしていません。
+
+list_gearを追加しました。解決済み地域ホストのGET /users/{userId}/gearsを使用。引数なしはstatus=1&limit=100、有効ギア一覧。gear_type指定時はgearTypeとlimit=100だけを送信（既知の0は靴、1は自転車）。全非秘密属性とgearId別の名前・累計距離の対応を返します。名前はnickname優先、brandModelへフォールバック。totalDistanceMとinitialDistanceMはメートルの元値として別々に保持し、合算しません。重複IDも残します。未知のページング引数を推測せず1ページのみ取得します。
+
+get_profileのpropertiesを有効化しました。数値IDのGET /users/{userId}/propertiesへpropertyNameとmodeを送ります。既定はアプリのhuami.watch/RANGE照会で、全名前空間を無条件取得するものではありません。明示したproperty_namesは既定BATCH、RANGEは1つのprefixのみ。空オブジェクトも有効にし、全応答を保持して埋め込みJSONも展開します。上流400の単一原因を断定せず、APKの定義に一致させています。
+
+型チェック・ビルド・全81テスト通過（通常77件とローカルFIT回帰4件）。APKから抽出した値や実データではなく、手書きの合成データでGETパス・地域・クエリ、名称と距離の対応、欠損・空・重複・未知属性、秘密除外、RANGE/BATCH制約、再認証後のuser_idパス再生成、MCP上の新ツール・propertiesを検証しました。パッケージ・DEX・逆コンパイルソース混入の検査とGit除外を追加しています。
+
+本番のMCP用トークンを安全な入力経路で受領し、管理されたリポジトリ外ファイルから接続コマンド内でだけ読み取りました。値はログ・レポート・README等へ記録していません。Workerシークレットの取得・変更、Zeppメール・パスワードの要求は行っていません。
+
+0.2.16を既存環境設定を保持してデプロイし、healthのHTTP 200・ok=true・implementation_version=0.2.16を確認しました。本番MCP経由の実データ検証結果:
+
+- list_gearの靴指定・有効ギア一覧とも上流HTTP 200、各7件。全7件に名前と数値の累計距離がありました。
+- 履歴は1ページ39件を取得し、全39件のgearIdを靴名・累計距離へ対応付けできました。
+- propertiesの既定RANGEはHTTP 200・空オブジェクト。APKにある別のversion範囲RANGEはHTTP 200・2項目。返却された完全一致キーのBATCHはHTTP 200・1項目を取得しました。prefixそのものをBATCH指定した場合は空で、RANGEと完全一致の区別も確認できました。
+
+実応答と対応表はGit除外済みoutputへ権限を制限して保存し、公開ファイルには実ID・表示名・靴名・距離の実値を含めていません。公開対象36ファイルのパターン検査は検出0件、除外確認14ケース通過。受領トークンの実値照合と、APK・DEX・逆コンパイルソース・既知の実ID・実データ混入の最終検査も検出0件でした。実応答・実フィクスチャはGit履歴にも含まれていません。フィクスチャ不在時も77件通過・4件スキップです。
+
+以下は以前の検証記録です。
+
 # 0.2.15 プロフィール・日次summaryの修正とMy Gear再調査
 
 get_profileのprofileは、複数の公開mobile実装で確認できたGET /huami.health.getUserInfo.json + userid + apptokenへ変更しました。認証で解決した地域を使い、別ホストへ推測で切り替えません。propertiesの正しい呼び出しは未特定のため、ツールを削除せず互換入力を保持し、properties_endpoint_unverifiedでネットワーク接続前に停止します。候補の根拠・旧404/400の利用者報告・無認証401と実アカウント成功の違いはRESEARCH.mdに記録しました。

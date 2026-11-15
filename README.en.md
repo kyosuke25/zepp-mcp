@@ -6,7 +6,7 @@ A personal MCP server that reads your workouts through Zepp's **unofficial cloud
 
 **This is not an official project of Zepp Health, Huami, or Amazfit and is not affiliated with those companies.** The unofficial API may change or become unavailable without notice. The software is provided under the MIT License, without warranties regarding operation or data accuracy.
 
-The current version is `0.2.15`. A public clone runs 69 tests using synthetic data and mocked network requests. Environments with the private local fixture also run four FIT regression tests. Authentication, retrieval of 39 workout records, and detailed decoding of the Fukuoka Marathon into per-second streams, including cadence, stride length, power, stance time, vertical oscillation, and vertical ratio, have been verified with a real account. This does not guarantee compatibility with every account, region, or device.
+The current version is `0.2.16`. A public clone runs 77 tests using synthetic data and mocked network requests. Environments with the private local fixture also run four FIT regression tests. Authentication, retrieval of 39 workout records, and detailed decoding of the Fukuoka Marathon into per-second streams, including cadence, stride length, power, stance time, vertical oscillation, and vertical ratio, have been verified with a real account. This does not guarantee compatibility with every account, region, or device.
 
 ## Prerequisites
 
@@ -148,7 +148,8 @@ An MCP `initialize` or `tools/list` POST with the Bearer header returning HTTP 2
 | `get_daily_data` | `from_date`, `to_date`, optional `query_type` | Complete sleep, HR, steps and activity response plus JSON and minute-HR decoding |
 | `get_health_events` | `event_type`, `from_ms`, `to_ms`, optional `sub_type`, `version`, `limit` | One page of stress, SpO2, PAI, load or other events |
 | `get_sport_statistics` | `metric`, `from_date`, `to_date`, optional `limit` | One page of sport-load, VO2max or other statistics |
-| `get_profile` | Optional `section` | Complete mobile getUserInfo response; unverified `properties` fails locally |
+| `get_profile` | Optional `section`, `property_names`, `property_mode` | Mobile profile or user properties selected by scope or keys |
+| `list_gear` | Optional `gear_type` | One My Gear page, with complete attributes and gearId-to-name/distance associations |
 | `get_device_settings` | `device_sources` | Settings metadata for known source IDs; not paired-device inventory |
 
 For the first live check, run `run_poc` **once**. If history is empty, detail retrieval is skipped. On failure, inspect the diagnostics instead of repeatedly calling with guessed settings. Zepp API calls other than authentication are GET requests only. There are no data writes or automatic pagination. Only HTTP 401/403 during history or detail retrieval invalidates the session and triggers reauthentication and at most one retry of the same data request. A second rejection stops the request; data-stage rejections are not cached as authentication failures for five minutes. Login-stage failures (auth_tokens/auth_login) are cached for five minutes and are not automatically retried.
@@ -162,7 +163,11 @@ This version uses Bearer-header authentication. It has no OAuth login page, auto
 
 `get_workout.metadata` and `run_poc.workout.metadata` contain available top-level detail-data shoe attributes such as `gearId`, `shoe_id`, `gear`, and `shoe`. Original key names and scalar values are preserved; arrays and objects are preserved too, with authentication-related keys removed recursively. When shoe data is absent, no shoe keys are added. These attributes are not time-series streams. A history ID is not copied into detail metadata.
 
-The My Gear list endpoint remains unidentified after further research, so `list_gear` is not provided. The [investigation log](RESEARCH.md) records profile candidates, reported responses, and APK acquisition constraints. Retrieval of registered shoe names or cumulative distance is not guaranteed. Live verification of a run with gearId on 0.2.11 is pending a check through an authenticated client.
+Version 0.2.16 uses `GET /users/{userId}/gears`, identified by static analysis of the official APK. With no arguments, `list_gear` sends `status=1&limit=100` for enabled gear. `gear_type: 0` sends `gearType=0&limit=100` for shoes; `gear_type: 1` selects bikes. Per-type queries omit status. Types 0/1 are documented by the APK; other numeric types are not guaranteed upstream. Only one page is fetched. `upstream.data.next` is preserved, but an unknown cursor parameter is never guessed.
+
+`items` and `upstream` retain every non-secret attribute. `gear_by_id[gearId]` is an array of associations. Names prefer `nickname`, fall back to `brandModel`, and otherwise remain null. `total_distance_m` comes from `totalDistanceM`, and `initial_distance_m` from `initialDistanceM`; they are not added together or assigned guessed units. Duplicate gear IDs retain all associations. Use a workout's gearId to look up shoe names and cumulative distance. The [analysis evidence](RESEARCH.md) records the request, model and host-resolution paths.
+
+Production verification of 0.2.16 retrieved seven shoes with names and cumulative distances and matched gearId for all 39 workout summaries. Real IDs, names, and distance values are not stored in the repository.
 
 ### All detail fields
 
@@ -176,14 +181,20 @@ Since 0.2.13, workout summaries have no field allowlist. New fields, sport-speci
 
 ### Data beyond workouts
 
-The [API coverage map](API_MAP.md) distinguishes documented paths from actual account availability. The new 0.2.14 tools are independently implemented from public protocol facts and tested with mocks; live retrieval on this account has not been verified. Making all Zepp data accessible is the policy, rather than a claim that every endpoint and semantic decoder is already complete.
+The [API coverage map](API_MAP.md) distinguishes documented paths from actual account availability. Some health APIs remain unverified against this account. Properties and gear were implemented from APK request definitions in 0.2.16; the [coverage map](API_MAP.md) and [report](REPORT.md) distinguish their verification status. Making all Zepp data accessible is the policy, rather than a claim that every endpoint and semantic decoder is already complete.
 
 - `get_daily_data` accepts `YYYY-MM-DD` dates covering up to 31 inclusive days. `query_type` defaults to `detail`; `summary` is also supported. The complete structured response is returned under `upstream`, and the encoded wire response under `encoded_upstream`. Both `days[].summary` and `days[].decoded.summary` expose the expanded summary; `summary_decode` states its format or result. Date-keyed responses, wrapper arrays, whitespace and unpadded/URL-safe Base64 are supported. Unknown formats produce `summary: null` and a warning while retaining raw values. Heart-rate bytes become minute positions and bpm under `heart_rate_minutes`; 0, 254, and 255 become null. Activity binary data remains raw with its format marked unverified. Dates and timezones are not inferred; include the previous date for sleep crossing midnight.
 - `get_health_events` accepts Unix-millisecond bounds spanning up to 31 days. `limit` is 1–1000 (default 200), and `version` defaults to `v1`. Use `all_day_stress` for stress, `blood_oxygen` for SpO2, and `PaiHealthInfo` for PAI. For training load, use `version: v2`, `event_type: exertion`, and `sub_type: algo_result`. All response fields and parsed embedded JSON are retained. Other event names are accepted, without a guarantee that Zepp supports or returns them.
 - `get_sport_statistics` accepts up to 31 inclusive dates. Documented metrics are `SPORT_LOAD` and `VO2_MAX`; `limit` is 1–1000 (default 200). Unknown metric names may be rejected upstream.
-- `get_profile.section` defaults to `profile`, using `/huami.health.getUserInfo.json` with `userid` as found in public mobile implementations. Following authenticated 404/400 reports for the old paths, `properties` now fails before network access with `properties_endpoint_unverified`. Authenticated success with the replacement path remains unverified on this account. For `get_device_settings.device_sources`, supply source IDs obtained from daily data or another known source.
+- `get_profile.section` defaults to `profile`, using `/huami.health.getUserInfo.json` with `userid`. `section: properties` uses the numeric-ID path `/users/{userId}/properties` with `propertyName` and `mode`. Without additional arguments, it mirrors the observed app query `propertyName=huami.watch&mode=RANGE` for the watch-settings scope; this does not fetch every namespace unconditionally. Explicit `property_names` defaults to `BATCH` for comma-separated exact keys. `property_mode: RANGE` requires exactly one namespace/prefix. Only BATCH supports multiple keys, with a local limit of 100. An empty property object is retained as a valid response. For `get_device_settings.device_sources`, supply source IDs obtained from daily data or another known source.
 
-All tools are read-only with no automatic pagination. Health GETs use the host resolved during authentication and `appplatform: web`, while mobile profile uses `android_phone`. HTTP 401/403 triggers at most one reauthentication and retry; the tools never probe another API or region automatically. Authentication material is excluded and redacted even inside embedded JSON/Base64 JSON. Empty responses do not necessarily mean that no measurements exist: device, date range, region, and upstream behavior affect availability.
+Production verification of 0.2.16 confirmed HTTP 200 for both properties RANGE and BATCH. The default `huami.watch` scope was empty, while the APK-observed `huami.midong.user.version` scope returned two fields; BATCH with an exact returned key retrieved one field. A RANGE prefix used as a BATCH exact key may return an empty object. Example scope query:
+
+```json
+{"section":"properties","property_names":["huami.midong.user.version"],"property_mode":"RANGE"}
+```
+
+All tools are read-only with no automatic pagination. Health GETs use the host resolved during authentication and `appplatform: web`, while mobile profile, properties and gear use `android_phone`. HTTP 401/403 triggers at most one reauthentication and retry; the tools never probe another API or region automatically. Authentication material is excluded and redacted even inside embedded JSON/Base64 JSON. Empty responses do not necessarily mean that no measurements exist: device, date range, region, and upstream behavior affect availability.
 
 ## Local development
 

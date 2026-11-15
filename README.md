@@ -6,7 +6,7 @@ Zeppの**非公式クラウドAPI**を使い、自分のワークアウトを読
 
 **Zepp Health、Huami、Amazfitの公式プロジェクトではなく、これらの企業とは無関係です。** 非公式APIは予告なく変更・停止される可能性があります。MITライセンスで、動作やデータの正確性は無保証です。
 
-現在のバージョンは`0.2.15`です。公開クローンでは合成データと通信モックによる69件のテストを実行し、ローカル専用フィクスチャがある環境ではFIT回帰テスト4件も実行します。実アカウントで認証、履歴39件の取得、福岡マラソンの詳細デコード（ケイデンス・歩幅・パワー・接地時間・上下動・上下動比を含む秒単位ストリーム）まで確認済みです。すべてのアカウント・地域・デバイスでの動作を保証するものではありません。
+現在のバージョンは`0.2.16`です。公開クローンでは合成データと通信モックによる77件のテストを実行し、ローカル専用フィクスチャがある環境ではFIT回帰テスト4件も実行します。実アカウントで認証、履歴39件の取得、福岡マラソンの詳細デコード（ケイデンス・歩幅・パワー・接地時間・上下動・上下動比を含む秒単位ストリーム）まで確認済みです。すべてのアカウント・地域・デバイスでの動作を保証するものではありません。
 
 ## 前提
 
@@ -148,7 +148,8 @@ Bearer付きのMCP `initialize`または`tools/list`へのPOSTがHTTP 200で返�
 | `get_daily_data` | `from_date`, `to_date`, 任意の`query_type` | 睡眠・心拍・歩数・活動の全応答とJSON・分単位心拍の展開 |
 | `get_health_events` | `event_type`, `from_ms`, `to_ms`, 任意の`sub_type`, `version`, `limit` | ストレス・SpO2・PAI・負荷等のイベント1ページ |
 | `get_sport_statistics` | `metric`, `from_date`, `to_date`, 任意の`limit` | 運動負荷・VO2max等の統計1ページ |
-| `get_profile` | 任意の`section` | mobile getUserInfoの全フィールド。`properties`は呼び出し未特定のためローカルで停止 |
+| `get_profile` | 任意の`section`, `property_names`, `property_mode` | mobileプロフィール、または指定範囲・キーのユーザープロパティ |
+| `list_gear` | 任意の`gear_type` | My Gearを1ページ取得。gearId→名前・累計距離の対応と全属性を返す |
 | `get_device_settings` | `device_sources` | 既知ソースIDのデバイス設定メタデータ。ペアリング一覧ではない |
 
 初回は`run_poc`を**1回だけ**実行します。空履歴なら詳細取得を省略します。失敗時は診断を確認し、推測した設定で呼び出しを繰り返さないでください。認証以外のZepp APIはGETのみで、書き込み・自動ページングはありません。履歴・詳細取得のHTTP 401/403に限り、セッションを破棄して再認証し、同じ取得要求を最大1回だけ再試行します。再度の拒否で打ち切り、データ段の拒否は5分間の認証失敗キャッシュに保存しません。ログイン段（auth_tokens/auth_login）の失敗は5分間キャッシュし、自動再試行しません。
@@ -162,7 +163,11 @@ Bearer付きのMCP `initialize`または`tools/list`へのPOSTがHTTP 200で返�
 
 `get_workout.metadata`および`run_poc.workout.metadata`には、詳細dataのトップレベルにある`gearId`、`shoe_id`、`gear`、`shoe`等の靴属性が入ります。元のキー名とスカラー値を保持し、配列・オブジェクトも保持し、内部を含めて認証関連キーを除外します。靴情報が無い場合は靴キーを追加しません。時系列ストリームには追加しません。履歴のIDを詳細へ補完する処理もありません。
 
-My Gear一覧APIは再調査後も未特定のため`list_gear`は未提供です。[調査記録](RESEARCH.md)にプロフィール候補・報告済み応答・APK入手の制約を記載しています。登録靴の名前・累積距離を取得できるとは保証しません。0.2.11のgearId付き実ラン検証は、認証済みクライアントからの確認待ちです。
+0.2.16は公式APKの静的解析で特定した`GET /users/{userId}/gears`を使います。`list_gear`の引数なしは`status=1&limit=100`で有効ギア一覧、`gear_type: 0`は`gearType=0&limit=100`で靴、`gear_type: 1`は自転車です。種別指定時はstatusを送りません。既知の型は0/1で、その他の数値の上流対応は保証しません。1ページのみで、`upstream.data.next`は保持しますが未確認のカーソル引数は推測しません。
+
+`items`と`upstream`に秘密情報を除く全属性を保持し、`gear_by_id[gearId]`に対応の配列を返します。名前は`nickname`を優先し、空なら`brandModel`、両方無ければnull。`total_distance_m`は上流の`totalDistanceM`、`initial_distance_m`は`initialDistanceM`です。足し算や単位の推測は行いません。同じgearIdが複数あっても上書きせず全対応を残します。履歴のgearIdでこの辞書を引くと、靴名・累計距離を照合できます。[解析の根拠](RESEARCH.md)にパス・モデル・ホスト解決の確認経路を記録しています。
+
+0.2.16の本番検証では靴7件の名前・累計距離を取得し、履歴39件すべてのgearIdを照合できました。実ID・名前・距離の値はリポジトリへ保存していません。
 
 ### 詳細の全フィールド
 
@@ -176,14 +181,20 @@ My Gear一覧APIは再調査後も未特定のため`list_gear`は未提供で�
 
 ### ワークアウト以外のデータ
 
-[API対応一覧](API_MAP.md)には、公開資料で確認できたパスと取得可否の確度をまとめています。0.2.14の新規ツールは公開プロトコルに基づく独立実装とモック検証までで、このアカウントの実データ取得は未確認です。Zeppにある全データを参照可能にする方針ですが、全エンドポイントの特定や意味的なデコードが完了したという意味ではありません。
+[API対応一覧](API_MAP.md)には、公開資料で確認できたパスと取得可否の確度をまとめています。健康系APIには実アカウントで未検証のものがあります。propertiesとギアは0.2.16でAPKの定義に基づいて実装しました。取得状況は[API対応一覧](API_MAP.md)と[REPORT](REPORT.md)で区別しています。Zeppにある全データを参照可能にする方針ですが、全エンドポイントの特定や意味的なデコードが完了したという意味ではありません。
 
 - `get_daily_data`は`YYYY-MM-DD`で最大31日（両端含む）。`query_type`は`detail`が既定、`summary`も指定できます。構造化した全応答を`upstream`へ、エンコードされた元の応答を`encoded_upstream`へ返します。`days[].summary`と`days[].decoded.summary`が展開済みのsummary、`summary_decode`が形式・結果です。日付キー付きの応答、ラッパー配列、空白・パディング省略・URL-safe Base64も扱います。未知の形式は`summary: null`と警告を返し、原文を保持します。心拍バイトは`heart_rate_minutes`へ分位置とbpmを出し、0・254・255はnull。活動バイナリは意味未確認として原文保持します。日付・タイムゾーンは推測せず、日をまたぐ睡眠は前日も指定してください。
 - `get_health_events`の期間はUnixミリ秒で最大31日、`limit`は1〜1000（既定200）、`version`は`v1`が既定です。ストレスは`all_day_stress`、SpO2は`blood_oxygen`、PAIは`PaiHealthInfo`。負荷は`version: v2`、`event_type: exertion`、`sub_type: algo_result`。全上流応答とJSON文字列の展開を保持します。その他のイベント名も指定できますが、上流対応や取得成功を保証しません。
 - `get_sport_statistics`は最大31日（両端含む）、既知の`metric`は`SPORT_LOAD`・`VO2_MAX`です。`limit`は1〜1000（既定200）。未知の指標は上流が拒否する可能性があります。
-- `get_profile.section`は`profile`が既定で、公開mobile実装で確認した`/huami.health.getUserInfo.json`へ`userid`付きでGETします。旧パスの実アカウント404/400報告を受け、`properties`は`properties_endpoint_unverified`でネットワーク接続前に停止します。新パスの実アカウント成功は未確認です。`get_device_settings.device_sources`には日次応答の`source`等で分かったソースIDを指定します。
+- `get_profile.section`は`profile`が既定で、`/huami.health.getUserInfo.json`へ`userid`付きでGETします。`section: properties`は数値IDの`/users/{userId}/properties`へ`propertyName`と`mode`を送ります。引数を追加しない場合は、アプリで確認した`propertyName=huami.watch&mode=RANGE`でwatch設定の範囲を取得します。全名前空間の無条件取得ではありません。`property_names`を明示した場合の既定は`BATCH`（指定キーのカンマ区切り照会）。`property_mode: RANGE`は名前空間・prefixを1つだけ指定します。BATCHのみ複数キーに対応し、上限100キーです。空のプロパティオブジェクトも有効な応答として保持します。`get_device_settings.device_sources`には日次応答の`source`等で分かったソースIDを指定します。
 
-いずれも読み取り専用・自動ページングなし。取得先は認証応答で解決したホスト、健康系GETは`appplatform: web`、mobileプロフィールは`android_phone`を用います。401/403は最大1回だけ再認証・再試行し、別API・別地域へ自動で切り替えません。全応答はネストしたJSON/Base64 JSON内も認証情報を除外・redactします。空応答は計測不在の証拠とは限らず、機種・期間・地域・上流仕様の影響を受けます。
+0.2.16ではpropertiesのRANGE・BATCHとも本番HTTP 200を確認しました。既定の`huami.watch`範囲は空でしたが、APKにもある`huami.midong.user.version`範囲は2項目、そこから得た正確なキーのBATCHは1項目を返しました。RANGEのprefixをBATCHの完全一致キーとして使うと空になる場合があります。範囲照会の例:
+
+```json
+{"section":"properties","property_names":["huami.midong.user.version"],"property_mode":"RANGE"}
+```
+
+いずれも読み取り専用・自動ページングなし。取得先は認証応答で解決したホスト、健康系GETは`appplatform: web`、mobileプロフィール・properties・ギアは`android_phone`を用います。401/403は最大1回だけ再認証・再試行し、別API・別地域へ自動で切り替えません。全応答はネストしたJSON/Base64 JSON内も認証情報を除外・redactします。空応答は計測不在の証拠とは限らず、機種・期間・地域・上流仕様の影響を受けます。
 
 ## ローカル開発
 
